@@ -1,0 +1,39 @@
+fw_jump := fw_jump.elf
+Image := Image
+rootfs_wrkdir := rootfs
+work_wrkdir := work
+rootfspart := filesystem
+fstab_ext := fstab_ext
+
+ROOTSIZE := 500M
+EXTSIZE := 500M
+
+.PHONY: all
+all:
+	-rm -f rootfs.ext4
+	-rm -f work.ext4
+ifneq (,$(EXT))
+	cp $(fstab_ext) $(rootfs_wrkdir)/etc/fstab
+	mkfs.ext4 -d $(rootfs_wrkdir) rootfs.ext4 $(ROOTSIZE)
+ifneq ("",$(EXT))
+	mkfs.ext4 -d $(EXT) work.ext4 $(EXTSIZE)
+else
+	mkfs.ext4 -d $(work_wrkdir) work.ext4 $(EXTSIZE)
+endif
+	$(QEMU) -nographic -M virt -m 512 -kernel $(fw_jump) \
+		-drive id=disk0,file=rootfs.ext4,if=none,format=raw \
+		-device virtio-blk-device,drive=disk0 \
+		-device loader,file=$(Image),addr=0x80200000 \
+		-append 'root=/dev/vda rw mem=512M console=ttyS0' \
+		-drive id=disk1,file=work.ext4,if=none,format=raw \
+		-device virtio-blk-device,drive=disk1 $(PARAM)
+else
+	mkfs.ext4 -d $(rootfs_wrkdir) rootfs.ext4 $(ROOTSIZE)
+	$(QEMU) -nographic -M virt -m 512 -kernel $(fw_jump) \
+		-drive id=disk0,file=rootfs.ext4,if=none,format=raw \
+		-device virtio-blk-device,drive=disk0 \
+		-device loader,file=$(Image),addr=0x80200000 \
+		-append 'root=/dev/vda mem=512M console=ttyS0' $(PARAM)
+endif
+
+

@@ -1,0 +1,42 @@
+
+#qemu4.2 compile
+sudo apt install libvirglrenderer-dev
+sudo apt install libvirglrenderer0
+
+#download qemu4.2 source code and cd source code dir
+#change "--prefix" to real path, "~/work/vm/qemu/arm-qemu-dev " is qemu installed dir
+./configure --target-list=arm-softmmu,arm-linux-user,aarch64-softmmu,aarch64-linux-user --prefix=~/work/vm/qemu/arm-qemu-dev --enable-sdl  --enable-virglrenderer
+make
+sudo make install
+ls -a ~/work/vm/qemu/arm-qemu-dev/
+
+#compile arm64 juno-r1 cortex-a57
+#~/work/\firmware\buildroot\make\Makefile.linux-qemu-arm-4_19    change cross toolchain
+#run qemu, change "KERNEL_ROOT_DIR" to real path, code root dir, "~/work/firmware" is repo init dir
+export KERNEL_ROOT_DIR=~/work/firmware
+cd buildroot/linux/qemu/arm/ 
+make 
+
+#run qemu, change "qemuBinPath" and "KernelRootPath" to real path
+./run_qemu.sh 
+
+#compile arm32 vexpress
+#~/work/\firmware\buildroot\make\Makefile.linux-qemu-vexpress-4_19    change cross toolchain
+#run qemu, change "KERNEL_ROOT_DIR" to real path, code root dir, "~/work/firmware" is repo init dir
+export KERNEL_ROOT_DIR=~/work/firmware
+cd buildroot/linux/qemu/vexpress/ 
+make 
+
+#run qemu, change "qemuBinPath" and "KernelRootPath" to real path
+./run_qemu.sh 
+
+
+#compile riscv
+#~/work/\firmware\buildroot\make\Makefile.linux-qemu-riscv-4_19    change cross toolchain
+#run qemu, change "KERNEL_ROOT_DIR" to real path, code root dir, "~/work/firmware" is repo init dir
+export KERNEL_ROOT_DIR=~/work/firmware
+cd buildroot/linux/qemu/riscv/ 
+make 
+
+#run qemu, change "qemuBinPath" and "KernelRootPath" to real path
+./run_qemu.sh 

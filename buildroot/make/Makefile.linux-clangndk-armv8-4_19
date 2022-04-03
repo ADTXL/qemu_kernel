@@ -1,0 +1,23 @@
+
+# Default Linux Kernel directory
+ifeq (,$(KERNDIR))
+
+endif
+
+# Default Linux include directory
+ifeq (,$(LINUX_INCLUDE))
+LINUX_INCLUDE := $(KERNDIR)/include
+endif
+
+PREFIX_CROSS_COMPILE := /home/dman/android11/android-ndk-r22/toolchains/llvm/prebuilt/linux-x86_64/bin/
+ARCH := arm64
+KBUILD_VERBOSE = 1
+TARGET_KERNEL_CLANG_COMPILE := CLANG_TRIPLE=aarch64-linux-gnu-
+TARGET_KERNEL_CLANG_COMPILE += LD_LIBRARY_PATH=$(PREFIX_CROSS_COMPILE)../lib64:$$LD_LIBRARY_PATH
+TARGET_KERNEL_CROSS_COMPILE := aarch64-linux-androidkernel-
+
+export ARCH KBUILD_VERBOSE
+
+ifneq ($(targetplat),user)
+include ${KERNEL_ROOT_DIR}/buildroot/make/Makefile.linux-clangndk-4_19
+endif

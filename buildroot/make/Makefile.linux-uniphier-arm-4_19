@@ -1,0 +1,20 @@
+
+# Default Linux Kernel directory
+ifeq (,$(KERNDIR))
+
+endif
+
+# Default Linux include directory
+ifeq (,$(LINUX_INCLUDE))
+LINUX_INCLUDE := $(KERNDIR)/include
+endif
+
+PREFIX_CROSS_COMPILE := $(KERNEL_ROOT_DIR)/toolchain/gcc/linux-x86/aarch64/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
+ARCH := arm64
+KBUILD_VERBOSE = 1
+
+export ARCH KBUILD_VERBOSE
+
+ifneq ($(targetplat),user)
+include ${KERNEL_ROOT_DIR}/buildroot/make/Makefile.linux-test-4_19
+endif
