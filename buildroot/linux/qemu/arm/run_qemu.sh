@@ -3,8 +3,8 @@
 set -e
 
 
-KernelRootPath="/home/android-4.19-r"
-qemuBinPath="/home/arm-qemu-dev/bin/"
+KernelRootPath="/home/user/txl/project/qemu_kernel"
+qemuBinPath="/home/user/txl/project/qemu_kernel/qemu/bin"
 QEMU=""$qemuBinPath"/qemu-system-aarch64"
 
 imgdir=""$KernelRootPath"/work/linux-qemu-arm-4_19/image"

@@ -9,7 +9,7 @@ ifeq (,$(LINUX_INCLUDE))
 LINUX_INCLUDE := $(KERNDIR)/include
 endif
 
-PREFIX_CROSS_COMPILE := $(KERNEL_ROOT_DIR)/toolchain/gcc/linux-x86/aarch64/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
+PREFIX_CROSS_COMPILE := aarch64-linux-gnu-
 ARCH := arm64
 KBUILD_VERBOSE = 1
 
