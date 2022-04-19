@@ -11,19 +11,7 @@
 # LINUX_INCLUDE      - path to Linux kernel include directory
 #
 
-KERNEL_ROOT_DIR :=$(shell if [ -n "$$KERNEL_ROOT_DIR" ] ; then\
-	echo $$KERNEL_ROOT_DIR;\
-	else\
-	cd $(dir $(lastword $(MAKEFILE_LIST))); while /usr/bin/test ! -e RELEASE ; do \
-	dir=`cd ../;pwd`;			\
-	if [ "$$dir" = "/" ] ; then		\
-	   echo Cannot find KERNEL_ROOT_DIR in $(lastword $(MAKEFILE_LIST)) 1>&2;		\
-	   exit 1;				\
-	fi ;					\
-	cd $$dir;				\
-	done ;					\
-	pwd;					\
-	fi)
+KERNEL_ROOT_DIR := $(shell cd ../../../../;pwd)
 
 ifeq ($(KERNEL_ROOT_DIR),)					
 $(error Please run this in a tree)		
