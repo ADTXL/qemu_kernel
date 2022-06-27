@@ -11,7 +11,6 @@
 //config:config DMESG
 //config:	bool "dmesg (3.7 kb)"
 //config:	default y
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	dmesg is used to examine or control the kernel ring buffer. When the
 //config:	Linux kernel prints messages to the system log, they are stored in
@@ -47,7 +46,7 @@
 //kbuild:lib-$(CONFIG_DMESG) += dmesg.o
 
 //usage:#define dmesg_trivial_usage
-//usage:       "[-c] [-n LEVEL] [-s SIZE]"
+//usage:       "[-cr] [-n LEVEL] [-s SIZE]"
 //usage:#define dmesg_full_usage "\n\n"
 //usage:       "Print or control the kernel ring buffer\n"
 //usage:     "\n	-c		Clear ring buffer after printing"

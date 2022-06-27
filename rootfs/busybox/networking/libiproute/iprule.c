@@ -17,8 +17,10 @@
 #include <arpa/inet.h>
 
 /* from <linux/fib_rules.h>: */
-#define FRA_SUPPRESS_IFGROUP   13
-#define FRA_SUPPRESS_PREFIXLEN 14
+#define FRA_FWMARK		10
+#define FRA_SUPPRESS_IFGROUP	13
+#define FRA_SUPPRESS_PREFIXLEN	14
+#define FRA_FWMASK		16
 
 #include "ip_common.h"  /* #include "libbb.h" is inside */
 #include "rt_names.h"
@@ -86,10 +88,9 @@ static int FAST_FUNC print_rule(const struct sockaddr_nl *who UNUSED_PARAM,
 				r->rtm_src_len
 			);
 		} else {
-			fputs(format_host(r->rtm_family,
+			fputs_stdout(format_host(r->rtm_family,
 						RTA_PAYLOAD(tb[RTA_SRC]),
-						RTA_DATA(tb[RTA_SRC])),
-				stdout
+						RTA_DATA(tb[RTA_SRC]))
 			);
 		}
 	} else if (r->rtm_src_len) {
@@ -117,8 +118,18 @@ static int FAST_FUNC print_rule(const struct sockaddr_nl *who UNUSED_PARAM,
 	if (r->rtm_tos) {
 		printf("tos %s ", rtnl_dsfield_n2a(r->rtm_tos));
 	}
-	if (tb[RTA_PROTOINFO]) {
-		printf("fwmark %#x ", *(uint32_t*)RTA_DATA(tb[RTA_PROTOINFO]));
+
+	if (tb[FRA_FWMARK] || tb[FRA_FWMASK]) {
+		uint32_t mark = 0, mask = 0;
+
+		if (tb[FRA_FWMARK])
+			mark = *(uint32_t*)RTA_DATA(tb[FRA_FWMARK]);
+		if (tb[FRA_FWMASK]
+		 && (mask = *(uint32_t*)RTA_DATA(tb[FRA_FWMASK])) != 0xFFFFFFFF
+		)
+			printf("fwmark %#x/%#x ", mark, mask);
+		else
+			printf("fwmark %#x ", mark);
 	}
 
 	if (tb[RTA_IIF]) {
@@ -166,7 +177,7 @@ static int FAST_FUNC print_rule(const struct sockaddr_nl *who UNUSED_PARAM,
 		} else
 			printf("masquerade");
 	} else if (r->rtm_type != RTN_UNICAST)
-		fputs(rtnl_rtntype_n2a(r->rtm_type), stdout);
+		fputs_stdout(rtnl_rtntype_n2a(r->rtm_type));
 
 	bb_putchar('\n');
 	/*fflush_all();*/
@@ -257,10 +268,18 @@ static int iprule_modify(int cmd, char **argv)
 				invarg_1_to_2(*argv, "TOS");
 			req.r.rtm_tos = tos;
 		} else if (key == ARG_fwmark) {
-			uint32_t fwmark;
+			char *slash;
+			uint32_t fwmark, fwmask;
 			NEXT_ARG();
+			slash = strchr(*argv, '/');
+			if (slash)
+				*slash = '\0';
 			fwmark = get_u32(*argv, keyword_fwmark);
-			addattr32(&req.n, sizeof(req), RTA_PROTOINFO, fwmark);
+			addattr32(&req.n, sizeof(req), FRA_FWMARK, fwmark);
+			if (slash) {
+				fwmask = get_u32(slash + 1, "fwmask");
+				addattr32(&req.n, sizeof(req), FRA_FWMASK, fwmask);
+			}
 		} else if (key == ARG_realms) {
 			uint32_t realm;
 			NEXT_ARG();

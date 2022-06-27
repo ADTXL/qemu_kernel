@@ -31,7 +31,7 @@
 //kbuild:lib-$(CONFIG_PATCH) += patch.o
 
 //usage:#define patch_trivial_usage
-//usage:       "[OPTIONS] [ORIGFILE [PATCHFILE]]"
+//usage:       "[-RNE] [-p N] [-i DIFF] [ORIGFILE [PATCHFILE]]"
 //usage:#define patch_full_usage "\n\n"
 //usage:       "	-p N	Strip N leading components from file names"
 //usage:     "\n	-i DIFF	Read DIFF instead of stdin"
@@ -264,7 +264,7 @@ static int apply_one_hunk(void)
 			if (!plist && matcheof) break;
 
 			if (backwarn)
-				fdprintf(2,"Possibly reversed hunk %d at %ld\n",
+				fdprintf(2, "Possibly reversed hunk %d at %ld\n",
 					TT.hunknum, TT.linenum);
 
 			// File ended before we found a place for this hunk.
@@ -593,6 +593,7 @@ int patch_main(int argc UNUSED_PARAM, char **argv)
 					TT.linenum = 0;
 					TT.hunknum = 0;
 				}
+				fflush_all(); // make "patching file F" visible
 			}
 
 			TT.hunknum++;

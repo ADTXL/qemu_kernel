@@ -104,7 +104,7 @@
 //usage:     "\n	-p	Put file"
 //usage:	)
 //usage:	IF_FEATURE_TFTP_BLOCKSIZE(
-//usage:     "\n	-b SIZE	Transfer blocks of SIZE octets"
+//usage:     "\n	-b SIZE	Transfer blocks in bytes"
 //usage:	)
 ///////:     "\n	-m STR	Accepted and ignored ('-m binary' compat with tftp-hpa 5.2)"
 //usage:
@@ -113,14 +113,13 @@
 //usage:#define tftpd_full_usage "\n\n"
 //usage:       "Transfer a file on tftp client's request\n"
 //usage:       "\n"
-//usage:       "tftpd should be used as an inetd service.\n"
-//usage:       "tftpd's line for inetd.conf:\n"
+//usage:       "tftpd is an inetd service, inetd.conf line:\n"
 //usage:       "	69 dgram udp nowait root tftpd tftpd -l /files/to/serve\n"
-//usage:       "It also can be ran from udpsvd:\n"
+//usage:       "Can be run from udpsvd:\n"
 //usage:       "	udpsvd -vE 0.0.0.0 69 tftpd /files/to/serve\n"
 //usage:     "\n	-r	Prohibit upload"
 //usage:     "\n	-c	Allow file creation via upload"
-//usage:     "\n	-u	Access files as USER"
+//usage:     "\n	-u USER	Access files as USER"
 //usage:     "\n	-l	Log to syslog (inetd mode requires this)"
 
 #include "libbb.h"

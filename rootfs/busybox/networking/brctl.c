@@ -12,7 +12,6 @@
 //config:config BRCTL
 //config:	bool "brctl (4.7 kb)"
 //config:	default y
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	Manage ethernet bridges.
 //config:	Supports addbr/delbr and addif/delif.
@@ -90,6 +89,7 @@ static unsigned str_to_jiffies(const char *time_str)
 {
 	double dd;
 	char *endptr;
+//TODO: needs setlocale(LC_NUMERIC, "C")?
 	dd = /*bb_*/strtod(time_str, &endptr);
 	if (endptr == time_str || dd < 0)
 		bb_error_msg_and_die(bb_msg_invalid_arg_to, time_str, "timespec");
@@ -107,7 +107,7 @@ static unsigned str_to_jiffies(const char *time_str)
 
 #define filedata bb_common_bufsiz1
 
-#if ENABLE_FEATURE_BRCTL_SHOW
+#if ENABLE_FEATURE_BRCTL_SHOW || ENABLE_FEATURE_BRCTL_FANCY
 static int read_file(const char *name)
 {
 	int n = open_read_close(name, filedata, COMMON_BUFSIZE - 1);
@@ -120,7 +120,9 @@ static int read_file(const char *name)
 	}
 	return n;
 }
+#endif
 
+#if ENABLE_FEATURE_BRCTL_SHOW
 /* NB: we are in /sys/class/net
  */
 static int show_bridge(const char *name, int need_hdr)
@@ -155,7 +157,7 @@ static int show_bridge(const char *name, int need_hdr)
 	else
 	if (LONE_CHAR(filedata, '1'))
 		strcpy(filedata, "yes");
-	fputs(filedata, stdout);
+	fputs_stdout(filedata);
 
 	/* sfx points past "BR/bridge/", turn it into "BR/brif": */
 	sfx[-4] = 'f'; sfx[-3] = '\0';
@@ -591,6 +593,7 @@ int brctl_main(int argc UNUSED_PARAM, char **argv)
 		return EXIT_SUCCESS;
 	}
 
+#if ENABLE_FEATURE_BRCTL_FANCY
 	if (key == ARG_showmacs) {
 		show_bridge_macs(br);
 		return EXIT_SUCCESS;
@@ -599,6 +602,7 @@ int brctl_main(int argc UNUSED_PARAM, char **argv)
 		show_bridge_stp(br);
 		return EXIT_SUCCESS;
 	}
+#endif
 
 	if (!*argv) /* All of the below need at least two arguments */
 		bb_show_usage();

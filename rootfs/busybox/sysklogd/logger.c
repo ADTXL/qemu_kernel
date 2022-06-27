@@ -21,12 +21,12 @@
 //kbuild:lib-$(CONFIG_LOGGER) += syslogd_and_logger.o
 
 //usage:#define logger_trivial_usage
-//usage:       "[OPTIONS] [MESSAGE]"
+//usage:       "[-s] [-t TAG] [-p PRIO] [MESSAGE]"
 //usage:#define logger_full_usage "\n\n"
 //usage:       "Write MESSAGE (or stdin) to syslog\n"
 //usage:     "\n	-s	Log to stderr as well as the system log"
 //usage:     "\n	-t TAG	Log using the specified tag (defaults to user name)"
-//usage:     "\n	-p PRIO	Priority (numeric or facility.level pair)"
+//usage:     "\n	-p PRIO	Priority (number or FACILITY.LEVEL pair)"
 //usage:
 //usage:#define logger_example_usage
 //usage:       "$ logger \"hello\"\n"

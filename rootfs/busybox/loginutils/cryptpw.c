@@ -32,22 +32,14 @@
 //kbuild:lib-$(CONFIG_MKPASSWD) += cryptpw.o
 
 //usage:#define cryptpw_trivial_usage
-//usage:       "[OPTIONS] [PASSWORD] [SALT]"
+//usage:       "[-P FD] [-m TYPE] [-S SALT] [PASSWORD] [SALT]"
 /* We do support -s, we just don't mention it */
 //usage:#define cryptpw_full_usage "\n\n"
 //usage:       "Print crypt(3) hashed PASSWORD\n"
-//usage:	IF_LONG_OPTS(
-//usage:     "\n	-P,--password-fd N	Read password from fd N"
-/* //usage:  "\n	-s,--stdin		Use stdin; like -P0" */
-//usage:     "\n	-m,--method TYPE	"CRYPT_METHODS_HELP_STR
-//usage:     "\n	-S,--salt SALT"
-//usage:	)
-//usage:	IF_NOT_LONG_OPTS(
 //usage:     "\n	-P N	Read password from fd N"
 /* //usage:  "\n	-s	Use stdin; like -P0" */
 //usage:     "\n	-m TYPE	"CRYPT_METHODS_HELP_STR
 //usage:     "\n	-S SALT"
-//usage:	)
 
 #include "libbb.h"
 
@@ -80,8 +72,8 @@ ENVIRONMENT
     A list of options which will be evaluated before the ones
     specified on the command line.
 BUGS
-    This programs suffers of a bad case of featuritis.
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    This program suffers of a bad case of featuritis.
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Very true...
 

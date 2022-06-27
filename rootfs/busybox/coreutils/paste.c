@@ -18,7 +18,7 @@
 //kbuild:lib-$(CONFIG_PASTE) += paste.o
 
 //usage:#define paste_trivial_usage
-//usage:       "[OPTIONS] [FILE]..."
+//usage:       "[-d LIST] [-s] [FILE]..."
 //usage:#define paste_full_usage "\n\n"
 //usage:       "Paste lines from each input file, separated with tab\n"
 //usage:     "\n	-d LIST	Use delimiters from LIST, not tab"
@@ -53,7 +53,7 @@ static void paste_files(FILE** files, int file_cnt, char* delims, int del_cnt)
 				--active_files;
 				continue;
 			}
-			fputs(line, stdout);
+			fputs_stdout(line);
 			free(line);
 			delim = '\n';
 			if (i != file_cnt - 1) {
@@ -79,7 +79,7 @@ static void paste_files_separate(FILE** files, char* delims, int del_cnt)
 		line = NULL;
 		while ((next_line = xmalloc_fgetline(files[i])) != NULL) {
 			if (line) {
-				fputs(line, stdout);
+				fputs_stdout(line);
 				free(line);
 				delim = delims[del_idx++];
 				if (del_idx == del_cnt)

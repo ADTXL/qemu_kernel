@@ -27,7 +27,7 @@
 //kbuild:lib-$(CONFIG_FEATURE_UDHCP_RFC3397) += domain_codec.o
 
 //usage:#define udhcpd_trivial_usage
-//usage:       "[-fS] [-I ADDR]" IF_FEATURE_UDHCP_PORT(" [-P N]") " [CONFFILE]"
+//usage:       "[-fS] [-I ADDR]" IF_FEATURE_UDHCP_PORT(" [-P PORT]") " [CONFFILE]"
 //usage:#define udhcpd_full_usage "\n\n"
 //usage:       "DHCP server\n"
 //usage:     "\n	-f	Run in foreground"
@@ -35,7 +35,7 @@
 //usage:     "\n	-I ADDR	Local address"
 //usage:     "\n	-a MSEC	Timeout for ARP ping (default 2000)"
 //usage:	IF_FEATURE_UDHCP_PORT(
-//usage:     "\n	-P N	Use port N (default 67)"
+//usage:     "\n	-P PORT	Use PORT (default 67)"
 //usage:	)
 //usage:     "\nSignals:"
 //usage:     "\n	USR1	Update lease file"
@@ -45,6 +45,12 @@
 #include "common.h"
 #include "dhcpc.h"
 #include "dhcpd.h"
+
+#if ENABLE_PID_FILE_PATH
+#define PID_FILE_PATH CONFIG_PID_FILE_PATH
+#else
+#define PID_FILE_PATH "/var/run"
+#endif
 
 /* globals */
 #define g_leases ((struct dyn_lease*)ptr_to_globals)
@@ -289,12 +295,11 @@ static uint32_t find_free_or_expired_nip(const uint8_t *safe_mac, unsigned arppi
 		uint32_t nip;
 		struct dyn_lease *lease;
 
-		/* ie, 192.168.55.0 */
-		if ((addr & 0xff) == 0)
-			goto next_addr;
-		/* ie, 192.168.55.255 */
-		if ((addr & 0xff) == 0xff)
-			goto next_addr;
+		/* (Addresses ending in .0 or .255 can legitimately be allocated
+		 * in various situations, so _don't_ skip these.  The user needs
+		 * to choose start_ip and end_ip correctly for a particular
+		 * network environment.) */
+
 		nip = htonl(addr);
 		/* skip our own address */
 		if (nip == server_data.server_nip)
@@ -392,7 +397,7 @@ struct config_keyword {
 
 #define OFS(field) offsetof(struct server_data_t, field)
 
-static const struct config_keyword keywords[] = {
+static const struct config_keyword keywords[] ALIGN_PTR = {
 	/* keyword        handler           variable address    default */
 	{"start"        , udhcp_str2nip   , OFS(start_ip     ), "192.168.0.20"},
 	{"end"          , udhcp_str2nip   , OFS(end_ip       ), "192.168.0.254"},
@@ -406,7 +411,7 @@ static const struct config_keyword keywords[] = {
 	{"offer_time"   , read_u32        , OFS(offer_time   ), "60"},
 	{"min_lease"    , read_u32        , OFS(min_lease_sec), "60"},
 	{"lease_file"   , read_str        , OFS(lease_file   ), LEASES_FILE},
-	{"pidfile"      , read_str        , OFS(pidfile      ), "/var/run/udhcpd.pid"},
+	{"pidfile"      , read_str        , OFS(pidfile      ), PID_FILE_PATH "/udhcpd.pid"},
 	{"siaddr"       , udhcp_str2nip   , OFS(siaddr_nip   ), "0.0.0.0"},
 	/* keywords with no defaults must be last! */
 	{"option"       , read_optset     , OFS(options      ), ""},
@@ -606,7 +611,8 @@ static void send_packet_to_relay(struct dhcp_packet *dhcp_pkt)
 
 	udhcp_send_kernel_packet(dhcp_pkt,
 			server_data.server_nip, SERVER_PORT,
-			dhcp_pkt->gateway_nip, SERVER_PORT);
+			dhcp_pkt->gateway_nip, SERVER_PORT,
+			server_data.interface);
 }
 
 static void send_packet(struct dhcp_packet *dhcp_pkt, int force_broadcast)
@@ -1041,7 +1047,7 @@ int udhcpd_main(int argc UNUSED_PARAM, char **argv)
 			move_from_unaligned32(server_id_network_order, server_id_opt);
 			if (server_id_network_order != server_data.server_nip) {
 				/* client talks to somebody else */
-				log1("server ID doesn't match%s", ", ignoring");
+				log1("server ID doesn't match%s", ", ignoring packet");
 				continue;
 			}
 		}
@@ -1164,7 +1170,7 @@ o DHCPREQUEST generated during REBINDING state:
 			if (!requested_ip_opt) {
 				requested_nip = packet.ciaddr;
 				if (requested_nip == 0) {
-					log1("no requested IP and no ciaddr%s", ", ignoring");
+					log1("no requested IP and no ciaddr%s", ", ignoring packet");
 					break;
 				}
 			}

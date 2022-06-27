@@ -219,7 +219,7 @@ char* FAST_FUNC make_new_name_generic(char *filename, const char *expected_ext)
 //usage:#define uncompress_trivial_usage
 //usage:       "[-cf] [FILE]..."
 //usage:#define uncompress_full_usage "\n\n"
-//usage:       "Decompress .Z file[s]\n"
+//usage:       "Decompress FILEs (or stdin)\n"
 //usage:     "\n	-c	Write to stdout"
 //usage:     "\n	-f	Overwrite"
 
@@ -284,7 +284,7 @@ int uncompress_main(int argc UNUSED_PARAM, char **argv)
 //usage:     "\n	-c	Write to stdout"
 //usage:     "\n	-f	Force"
 //usage:     "\n	-k	Keep input files"
-//usage:     "\n	-t	Test file integrity"
+//usage:     "\n	-t	Test integrity"
 //usage:
 //usage:#define gunzip_example_usage
 //usage:       "$ ls -la /tmp/BusyBox*\n"
@@ -386,7 +386,7 @@ int gunzip_main(int argc UNUSED_PARAM, char **argv)
 	 * Normally, "zcat" is just "gunzip -c".
 	 * But if seamless magic is enabled, then we are much more clever.
 	 */
-	if (ENABLE_ZCAT && (!ENABLE_GUNZIP || applet_name[1] == 'c'))
+	if (ENABLE_ZCAT && applet_name[1] == 'c')
 		option_mask32 |= BBUNPK_OPT_STDOUT | BBUNPK_SEAMLESS_MAGIC;
 
 	return bbunpack(argv, unpack_gz_stream, make_new_name_gunzip, /*unused:*/ NULL);
@@ -407,6 +407,8 @@ int gunzip_main(int argc UNUSED_PARAM, char **argv)
 //usage:     "\n	-c	Write to stdout"
 //usage:     "\n	-f	Force"
 //usage:     "\n	-k	Keep input files"
+//usage:     "\n	-t	Test integrity"
+//usage:
 //usage:#define bzcat_trivial_usage
 //usage:       "[FILE]..."
 //usage:#define bzcat_full_usage "\n\n"
@@ -461,19 +463,21 @@ int bunzip2_main(int argc UNUSED_PARAM, char **argv)
 //usage:#define unlzma_trivial_usage
 //usage:       "[-cfk] [FILE]..."
 //usage:#define unlzma_full_usage "\n\n"
-//usage:       "Decompress FILE (or stdin)\n"
+//usage:       "Decompress FILEs (or stdin)\n"
 //usage:     "\n	-c	Write to stdout"
 //usage:     "\n	-f	Force"
 //usage:     "\n	-k	Keep input files"
+//usage:     "\n	-t	Test integrity"
 //usage:
 //usage:#define lzma_trivial_usage
 //usage:       "-d [-cfk] [FILE]..."
 //usage:#define lzma_full_usage "\n\n"
-//usage:       "Decompress FILE (or stdin)\n"
+//usage:       "Decompress FILEs (or stdin)\n"
 //usage:     "\n	-d	Decompress"
 //usage:     "\n	-c	Write to stdout"
 //usage:     "\n	-f	Force"
 //usage:     "\n	-k	Keep input files"
+//usage:     "\n	-t	Test integrity"
 //usage:
 //usage:#define lzcat_trivial_usage
 //usage:       "[FILE]..."
@@ -532,21 +536,21 @@ int unlzma_main(int argc UNUSED_PARAM, char **argv)
 //usage:#define unxz_trivial_usage
 //usage:       "[-cfk] [FILE]..."
 //usage:#define unxz_full_usage "\n\n"
-//usage:       "Decompress FILE (or stdin)\n"
+//usage:       "Decompress FILEs (or stdin)\n"
 //usage:     "\n	-c	Write to stdout"
 //usage:     "\n	-f	Force"
 //usage:     "\n	-k	Keep input files"
-//usage:     "\n	-t	Test file integrity"
+//usage:     "\n	-t	Test integrity"
 //usage:
 //usage:#define xz_trivial_usage
 //usage:       "-d [-cfk] [FILE]..."
 //usage:#define xz_full_usage "\n\n"
-//usage:       "Decompress FILE (or stdin)\n"
+//usage:       "Decompress FILEs (or stdin)\n"
 //usage:     "\n	-d	Decompress"
 //usage:     "\n	-c	Write to stdout"
 //usage:     "\n	-f	Force"
 //usage:     "\n	-k	Keep input files"
-//usage:     "\n	-t	Test file integrity"
+//usage:     "\n	-t	Test integrity"
 //usage:
 //usage:#define xzcat_trivial_usage
 //usage:       "[FILE]..."

@@ -109,7 +109,6 @@
 //config:	bool "Linux kernel printk buffer support"
 //config:	default y
 //config:	depends on SYSLOGD
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	When you enable this feature, the syslogd utility will
 //config:	write system log message to the Linux kernel's printk buffer.
@@ -843,7 +842,7 @@ static void timestamp_and_log(int pri, char *msg, int len)
 #if ENABLE_FEATURE_SYSLOGD_PRECISE_TIMESTAMPS
 	if (!timestamp) {
 		struct timeval tv;
-		gettimeofday(&tv, NULL);
+		xgettimeofday(&tv);
 		now = tv.tv_sec;
 		timestamp = ctime(&now) + 4; /* skip day of week */
 		/* overwrite year by milliseconds, zero terminate */
@@ -1035,6 +1034,7 @@ static void do_syslogd(void)
 		kmsg_init();
 
 	timestamp_and_log_internal("syslogd started: BusyBox v" BB_VER);
+	write_pidfile_std_path_and_ext("syslogd");
 
 	while (!bb_got_signal) {
 		ssize_t sz;
@@ -1182,9 +1182,6 @@ int syslogd_main(int argc UNUSED_PARAM, char **argv)
 	if (!(opts & OPT_nofork)) {
 		bb_daemonize_or_rexec(DAEMON_CHDIR_ROOT, argv);
 	}
-
-	//umask(0); - why??
-	write_pidfile_std_path_and_ext("syslogd");
 
 	do_syslogd();
 	/* return EXIT_SUCCESS; */

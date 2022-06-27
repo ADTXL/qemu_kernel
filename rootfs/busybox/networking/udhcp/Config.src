@@ -6,7 +6,6 @@
 config UDHCPD
 	bool "udhcpd (21 kb)"
 	default y
-	select PLATFORM_LINUX
 	help
 	udhcpd is a DHCP server geared primarily toward embedded systems,
 	while striving to be fully functional and RFC compliant.
@@ -62,7 +61,6 @@ config DHCPRELAY
 config UDHCPC
 	bool "udhcpc (24 kb)"
 	default y
-	select PLATFORM_LINUX
 	help
 	udhcpc is a DHCP client geared primarily toward embedded systems,
 	while striving to be fully functional and RFC compliant.
@@ -105,6 +103,14 @@ INSERT
 
 comment "Common options for DHCP applets"
         depends on UDHCPD || UDHCPC || UDHCPC6 || DHCPRELAY
+
+config UDHCPC_DEFAULT_INTERFACE
+	string "Default interface name"
+	default "eth0"
+	depends on UDHCPC || UDHCPC6
+	help
+	The interface that will be used if no other interface is
+	specified on the commandline.
 
 config FEATURE_UDHCP_PORT
 	bool "Enable '-P port' option for udhcpd and udhcpc"

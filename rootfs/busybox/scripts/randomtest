@@ -83,7 +83,6 @@ if test x"$LIBC" = x"uclibc"; then
 	\
 	| grep -v CONFIG_FEATURE_2_4_MODULES \
 	| grep -v CONFIG_FEATURE_SYNC_FANCY \
-	| grep -v CONFIG_FEATURE_TOUCH_NODEREF \
 	| grep -v CONFIG_NANDWRITE \
 	| grep -v CONFIG_NANDDUMP \
 	| grep -v CONFIG_BLKDISCARD \
@@ -100,7 +99,6 @@ if test x"$LIBC" = x"uclibc"; then
 	echo '# CONFIG_PIE is not set' >>.config
 	echo '# CONFIG_FEATURE_2_4_MODULES is not set' >>.config
 	echo '# CONFIG_FEATURE_SYNC_FANCY is not set' >>.config
-	echo '# CONFIG_FEATURE_TOUCH_NODEREF is not set' >>.config
 	# My uclibc installation does not support some needed APIs...
 	echo '# CONFIG_NANDWRITE is not set' >>.config
 	echo '# CONFIG_NANDDUMP is not set' >>.config
@@ -111,6 +109,31 @@ if test x"$LIBC" = x"uclibc"; then
 	echo '# CONFIG_UDHCPC6 is not set' >>.config
 	echo '# CONFIG_NSLOOKUP is not set' >>.config
 	echo 'CONFIG_ASH_INTERNAL_GLOB=y' >>.config
+fi
+
+# If musl
+if test x"$LIBC" = x"musl"; then
+	cat .config \
+	| grep -v CONFIG_STATIC \
+	| grep -v CONFIG_DEBUG_SANITIZE \
+	| grep -v CONFIG_LFS \
+	| grep -v CONFIG_EXTRA_COMPAT \
+	| grep -v CONFIG_FEATURE_2_4_MODULES \
+	| grep -v CONFIG_FEATURE_VI_REGEX_SEARCH \
+	| grep -v CONFIG_FEATURE_MOUNT_NFS \
+	| grep -v CONFIG_FEATURE_INETD_RPC \
+	>.config.new
+	mv .config.new .config
+	echo 'CONFIG_STATIC=y' >>.config
+	# "error: cannot specify -static with -fsanitize=address":
+	echo '# CONFIG_DEBUG_SANITIZE is not set' >>.config
+	# with LFS off, uoff_t will have wrong width:
+	echo 'CONFIG_LFS=y' >>.config
+	echo '# CONFIG_EXTRA_COMPAT is not set' >>.config
+	echo '# CONFIG_FEATURE_2_4_MODULES is not set' >>.config
+	echo '# CONFIG_FEATURE_VI_REGEX_SEARCH is not set' >>.config
+	echo '# CONFIG_FEATURE_MOUNT_NFS is not set' >>.config
+	echo '# CONFIG_FEATURE_INETD_RPC is not set' >>.config
 fi
 
 # If STATIC, remove some things.

@@ -46,7 +46,7 @@ struct dhcp_packet {
 	uint8_t file[128];    /* boot file name (ASCIZ) */
 	uint32_t cookie;      /* fixed first four option bytes (99,130,83,99 dec) */
 	uint8_t options[DHCP_OPTIONS_BUFSIZE + CONFIG_UDHCPC_SLACK_FOR_BUGGY_SERVERS];
-} PACKED;
+};
 #define DHCP_PKT_SNAME_LEN      64
 #define DHCP_PKT_FILE_LEN      128
 #define DHCP_PKT_SNAME_LEN_STR "64"
@@ -56,12 +56,12 @@ struct ip_udp_dhcp_packet {
 	struct iphdr ip;
 	struct udphdr udp;
 	struct dhcp_packet data;
-} PACKED;
+};
 
 struct udp_dhcp_packet {
 	struct udphdr udp;
 	struct dhcp_packet data;
-} PACKED;
+};
 
 enum {
 	IP_UDP_DHCP_SIZE = sizeof(struct ip_udp_dhcp_packet) - CONFIG_UDHCPC_SLACK_FOR_BUGGY_SERVERS,
@@ -78,7 +78,7 @@ struct BUG_bad_sizeof_struct_ip_udp_dhcp_packet {
 /*** Options ***/
 
 enum {
-	OPTION_IP = 1,
+	OPTION_IP = 0,
 	OPTION_IP_PAIR,
 	OPTION_STRING,
 	/* Opts of STRING_HOST type will be sanitized before they are passed
@@ -105,6 +105,12 @@ enum {
 	OPTION_REQ  = 0x10,
 	/* There can be a list of 1 or more of these */
 	OPTION_LIST = 0x20,
+};
+
+struct dhcp_scan_state {
+	int overload;
+	int rem;
+	uint8_t *optionptr;
 };
 
 /* DHCP option codes (partial list). See RFC 2132 and
@@ -206,6 +212,8 @@ extern const uint8_t dhcp_option_lengths[] ALIGN1;
 
 unsigned FAST_FUNC udhcp_option_idx(const char *name, const char *option_strings);
 
+void init_scan_state(struct dhcp_packet *packet, struct dhcp_scan_state *scan_state) FAST_FUNC;
+uint8_t *udhcp_scan_options(struct dhcp_packet *packet, struct dhcp_scan_state *scan_state) FAST_FUNC;
 uint8_t *udhcp_get_option(struct dhcp_packet *packet, int code) FAST_FUNC;
 /* Same as above + ensures that option length is 4 bytes
  * (returns NULL if size is different)
@@ -218,7 +226,7 @@ void udhcp_add_simple_option(struct dhcp_packet *packet, uint8_t code, uint32_t 
 #endif
 #if ENABLE_FEATURE_UDHCP_RFC3397 || ENABLE_FEATURE_UDHCPC6_RFC3646 || ENABLE_FEATURE_UDHCPC6_RFC4704
 char *dname_dec(const uint8_t *cstr, int clen, const char *pre) FAST_FUNC;
-uint8_t *dname_enc(const uint8_t *cstr, int clen, const char *src, int *retlen) FAST_FUNC;
+uint8_t *dname_enc(/*const uint8_t *cstr, int clen,*/ const char *src, int *retlen) FAST_FUNC;
 #endif
 struct option_set *udhcp_find_option(struct option_set *opt_list, uint8_t code) FAST_FUNC;
 
@@ -267,7 +275,8 @@ struct option_set *udhcp_find_option(struct option_set *opt_list, uint8_t code) 
 # define IF_UDHCP_VERBOSE(...) __VA_ARGS__
 extern unsigned dhcp_verbose;
 # define log1(...) do { if (dhcp_verbose >= 1) bb_info_msg(__VA_ARGS__); } while (0)
-# define log1s(msg) do { if (dhcp_verbose >= 1) bb_simple_info_msg(msg); } while (0)
+//# define log1s(msg) do { if (dhcp_verbose >= 1) bb_simple_info_msg(msg); } while (0)
+void log1s(const char *msg) FAST_FUNC;
 # if CONFIG_UDHCP_DEBUG >= 2
 void udhcp_dump_packet(struct dhcp_packet *packet) FAST_FUNC;
 #  define log2(...) do { if (dhcp_verbose >= 2) bb_info_msg(__VA_ARGS__); } while (0)
@@ -311,6 +320,16 @@ void udhcp_dump_packet(struct dhcp_packet *packet) FAST_FUNC;
 
 /* 2nd param is "uint32_t*" */
 int FAST_FUNC udhcp_str2nip(const char *str, void *arg);
+
+#if !ENABLE_UDHCPC6
+#define udhcp_insert_new_option(opt_list, code, length, dhcpv6) \
+	udhcp_insert_new_option(opt_list, code, length)
+#endif
+void* FAST_FUNC udhcp_insert_new_option(struct option_set **opt_list,
+		unsigned code,
+		unsigned length,
+		bool dhcpv6);
+
 /* 2nd param is "struct option_set**" */
 #if !ENABLE_UDHCPC6
 #define udhcp_str2optset(str, arg, optflags, option_strings, dhcpv6) \
@@ -335,7 +354,8 @@ int udhcp_send_raw_packet(struct dhcp_packet *dhcp_pkt,
 
 int udhcp_send_kernel_packet(struct dhcp_packet *dhcp_pkt,
 		uint32_t source_nip, int source_port,
-		uint32_t dest_nip, int dest_port) FAST_FUNC;
+		uint32_t dest_nip, int dest_port,
+		const char *ifname) FAST_FUNC;
 
 void udhcp_sp_setup(void) FAST_FUNC;
 void udhcp_sp_fd_set(struct pollfd *pfds, int extra_fd) FAST_FUNC;

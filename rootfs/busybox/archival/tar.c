@@ -297,7 +297,8 @@ static void writeLongname(int fd, int type, const char *name, int dir)
 	header.typeflag = type;
 	strcpy(header.name, "././@LongLink");
 	/* This sets mode/uid/gid/mtime to "00...00<NUL>" strings */
-	memset(header.mode, '0', sizeof(struct prefilled));
+	memset((char*)&header + offsetof(struct tar_header_t, mode), /* make gcc-9.x happy */
+			'0', sizeof(struct prefilled));
 	header.mode [sizeof(header.mode ) - 1] = '\0';
 	header.uid  [sizeof(header.uid  ) - 1] = '\0';
 	header.gid  [sizeof(header.gid  ) - 1] = '\0';
@@ -490,10 +491,11 @@ static int exclude_file(const llist_t *excluded_files, const char *file)
 #  define exclude_file(excluded_files, file) 0
 # endif
 
-static int FAST_FUNC writeFileToTarball(const char *fileName, struct stat *statbuf,
-			void *userData, int depth UNUSED_PARAM)
+static int FAST_FUNC writeFileToTarball(struct recursive_state *state,
+		const char *fileName,
+		struct stat *statbuf)
 {
-	struct TarBallInfo *tbInfo = (struct TarBallInfo *) userData;
+	struct TarBallInfo *tbInfo = (struct TarBallInfo *) state->userData;
 	const char *header_name;
 	int inputFileFd = -1;
 
@@ -504,6 +506,9 @@ static int FAST_FUNC writeFileToTarball(const char *fileName, struct stat *statb
 
 	if (header_name[0] == '\0')
 		return TRUE;
+
+	if (exclude_file(tbInfo->excludeList, header_name))
+		return SKIP; /* "do not recurse on this directory", no error message printed */
 
 	/* It is against the rules to archive a socket */
 	if (S_ISSOCK(statbuf->st_mode)) {
@@ -538,9 +543,6 @@ static int FAST_FUNC writeFileToTarball(const char *fileName, struct stat *statb
 		return TRUE;
 	}
 
-	if (exclude_file(tbInfo->excludeList, header_name))
-		return SKIP;
-
 # if !ENABLE_FEATURE_TAR_GNU_EXTENSIONS
 	if (strlen(header_name) >= NAME_SIZE) {
 		bb_simple_error_msg("names longer than "NAME_SIZE_STR" chars not supported");
@@ -553,13 +555,13 @@ static int FAST_FUNC writeFileToTarball(const char *fileName, struct stat *statb
 		/* open the file we want to archive, and make sure all is well */
 		inputFileFd = open_or_warn(fileName, O_RDONLY);
 		if (inputFileFd < 0) {
-			return FALSE;
+			return FALSE; /* make recursive_action() return FALSE */
 		}
 	}
 
 	/* Add an entry to the tarball */
 	if (writeTarHeader(tbInfo, header_name, fileName, statbuf) == FALSE) {
-		return FALSE;
+		return FALSE; /* make recursive_action() return FALSE */
 	}
 
 	/* If it was a regular file, write out the body */
@@ -699,7 +701,7 @@ static NOINLINE int writeTarFile(
 	/* Read the directory/files and iterate over them one at a time */
 	while (filelist) {
 		if (!recursive_action(filelist->data, recurseFlags,
-				writeFileToTarball, writeFileToTarball, tbInfo, 0)
+				writeFileToTarball, writeFileToTarball, tbInfo)
 		) {
 			errorFlag = TRUE;
 		}
@@ -773,7 +775,7 @@ static llist_t *append_file_list_to_list(llist_t *list)
 //usage:	IF_FEATURE_TAR_NOPRESERVE_TIME("m")
 //usage:	"vokO] "
 //usage:	"[-f TARFILE] [-C DIR] "
-//usage:	IF_FEATURE_TAR_FROM("[-T FILE] [-X FILE] "IF_FEATURE_TAR_LONG_OPTIONS("[--exclude PATTERN]... "))
+//usage:	IF_FEATURE_TAR_FROM("[-T FILE] [-X FILE] "IF_FEATURE_TAR_LONG_OPTIONS("[LONGOPT]... "))
 //usage:	"[FILE]..."
 //usage:#define tar_full_usage "\n\n"
 //usage:	IF_FEATURE_TAR_CREATE("Create, extract, ")
@@ -807,6 +809,11 @@ static llist_t *append_file_list_to_list(llist_t *list)
 //usage:	IF_FEATURE_SEAMLESS_BZ2(
 //usage:     "\n	-j	(De)compress using bzip2"
 //usage:	)
+//usage:	IF_FEATURE_SEAMLESS_LZMA(
+//usage:	IF_FEATURE_TAR_LONG_OPTIONS(
+//usage:     "\n	--lzma	(De)compress using lzma"
+//usage:	)
+//usage:	)
 //usage:     "\n	-a	(De)compress based on extension"
 //usage:	IF_FEATURE_TAR_CREATE(
 //usage:     "\n	-h	Follow symlinks"
@@ -818,20 +825,20 @@ static llist_t *append_file_list_to_list(llist_t *list)
 //usage:     "\n	--exclude PATTERN	Glob pattern to exclude"
 //usage:	)
 //usage:	)
+//usage:	IF_FEATURE_TAR_LONG_OPTIONS(
+//usage:     "\n	--overwrite		Replace existing files"
+//usage:     "\n	--strip-components NUM	NUM of leading components to strip"
+//usage:     "\n	--no-recursion		Don't descend in directories"
+//usage:     "\n	--numeric-owner		Use numeric user:group"
+//usage:     "\n	--no-same-permissions	Don't restore access permissions"
+//usage:	IF_FEATURE_TAR_TO_COMMAND(
+//usage:     "\n	--to-command COMMAND	Pipe files to COMMAND"
+//usage:	)
+//usage:	)
 //usage:
 //usage:#define tar_example_usage
 //usage:       "$ zcat /tmp/tarball.tar.gz | tar -xf -\n"
 //usage:       "$ tar -cf /tmp/tarball.tar /usr/local\n"
-
-// Supported but aren't in --help:
-//	lzma
-//	no-recursion
-//	numeric-owner
-//	no-same-permissions
-//	overwrite
-//IF_FEATURE_TAR_TO_COMMAND(
-//	to-command
-//)
 
 enum {
 	OPTBIT_KEEP_OLD = 8,
@@ -1125,14 +1132,15 @@ int tar_main(int argc UNUSED_PARAM, char **argv)
 		tar_handle->ah_flags &= ~ARCHIVE_RESTORE_DATE;
 
 #if ENABLE_FEATURE_TAR_FROM
+	/* Convert each -X EXCLFILE to list of to-be-rejected glob patterns */
 	tar_handle->reject = append_file_list_to_list(tar_handle->reject);
 # if ENABLE_FEATURE_TAR_LONG_OPTIONS
-	/* Append excludes to reject */
-	while (excludes) {
-		llist_t *next = excludes->link;
-		excludes->link = tar_handle->reject;
-		tar_handle->reject = excludes;
-		excludes = next;
+	/* Append --exclude=GLOBPATTERNs to reject */
+	if (excludes) {
+		llist_t **p2next = &tar_handle->reject;
+		while (*p2next)
+			p2next = &((*p2next)->link);
+		*p2next = excludes;
 	}
 # endif
 	tar_handle->accept = append_file_list_to_list(tar_handle->accept);

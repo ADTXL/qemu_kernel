@@ -303,6 +303,12 @@ int FAST_FUNC get_terminal_width(int fd)
 	return width;
 }
 
+int FAST_FUNC is_TERM_dumb(void)
+{
+	char *term = getenv("TERM");
+	return term && strcmp(term, "dumb") == 0;
+}
+
 int FAST_FUNC tcsetattr_stdin_TCSANOW(const struct termios *tp)
 {
 	return tcsetattr(STDIN_FILENO, TCSANOW, tp);
@@ -416,16 +422,4 @@ int FAST_FUNC wait4pid(pid_t pid)
 	if (WIFSIGNALED(status))
 		return WTERMSIG(status) + 0x180;
 	return 0;
-}
-
-// Useful when we do know that pid is valid, and we just want to wait
-// for it to exit. Not existing pid is fatal. waitpid() status is not returned.
-int FAST_FUNC wait_for_exitstatus(pid_t pid)
-{
-	int exit_status, n;
-
-	n = safe_waitpid(pid, &exit_status, 0);
-	if (n < 0)
-		bb_simple_perror_msg_and_die("waitpid");
-	return exit_status;
 }

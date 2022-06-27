@@ -56,7 +56,6 @@
 //config:config DEVFSD
 //config:	bool "devfsd (obsolete)"
 //config:	default n
-//config:	select PLATFORM_LINUX
 //config:	select FEATURE_SYSLOG
 //config:	help
 //config:	This is deprecated and should NOT be used anymore.
@@ -99,7 +98,6 @@
 //config:config FEATURE_DEVFS
 //config:	bool "Use devfs names for all devices (obsolete)"
 //config:	default n
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	This is obsolete and should NOT be used anymore.
 //config:	Use linux >= 2.6 (optionally with hotplug) and mdev instead!
@@ -353,6 +351,7 @@ static const char bb_msg_variable_not_found[] ALIGN1 = "variable: %s not found";
 #define error_logger_and_die(p, fmt, args...)        bb_perror_msg_and_die(fmt, ## args)
 #else
 #define info_logger(p, fmt, args...)
+#define simple_info_logger(p, msg)
 #define msg_logger(p, fmt, args...)
 #define simple_msg_logger(p, msg)
 #define msg_logger_and_die(p, fmt, args...)           exit(EXIT_FAILURE)
@@ -363,7 +362,7 @@ static const char bb_msg_variable_not_found[] ALIGN1 = "variable: %s not found";
 
 static void safe_memcpy(char *dest, const char *src, int len)
 {
-	memcpy(dest , src, len);
+	memcpy(dest, src, len);
 	dest[len] = '\0';
 }
 
@@ -1107,7 +1106,7 @@ static int copy_inode(const char *destpath, const struct stat *dest_stat,
 do_chown:
 			if (chown(destpath, source_stat->st_uid, source_stat->st_gid) == 0)
 				return TRUE;
-		/*break;*/
+			/*break;*/
 	}
 	return FALSE;
 }   /*  End Function copy_inode  */

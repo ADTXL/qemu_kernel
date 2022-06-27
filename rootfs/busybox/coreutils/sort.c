@@ -43,7 +43,7 @@
 
 //usage:#define sort_trivial_usage
 //usage:       "[-nru"
-//usage:	IF_FEATURE_SORT_BIG("gMcszbdfiokt] [-o FILE] [-k start[.offset][opts][,end[.offset][opts]] [-t CHAR")
+//usage:	IF_FEATURE_SORT_BIG("gMcszbdfiokt] [-o FILE] [-k START[.OFS][OPTS][,END[.OFS][OPTS]] [-t CHAR")
 //usage:       "] [FILE]..."
 //usage:#define sort_full_usage "\n\n"
 //usage:       "Sort lines of text\n"
@@ -67,7 +67,7 @@
 //usage:     "\n	-r	Reverse sort order"
 //usage:     "\n	-s	Stable (don't sort ties alphabetically)"
 //usage:     "\n	-u	Suppress duplicate lines"
-//usage:     "\n	-z	Lines are terminated by NUL, not newline"
+//usage:     "\n	-z	NUL terminated input and output"
 ///////:     "\n	-m	Ignored for GNU compatibility"
 ///////:     "\n	-S BUFSZ Ignored for GNU compatibility"
 ///////:     "\n	-T TMPDIR Ignored for GNU compatibility"
@@ -295,6 +295,7 @@ static int compare_keys(const void *xarg, const void *yarg)
 #if ENABLE_FEATURE_SORT_BIG
 		case FLAG_g: {
 			char *xx, *yy;
+//TODO: needs setlocale(LC_NUMERIC, "C")?
 			double dx = strtod(x, &xx);
 			double dy = strtod(y, &yy);
 			/* not numbers < NaN < -infinity < numbers < +infinity) */

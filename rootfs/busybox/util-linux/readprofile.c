@@ -34,7 +34,6 @@
 //config:config READPROFILE
 //config:	bool "readprofile (7.1 kb)"
 //config:	default y
-//config:	#select PLATFORM_LINUX
 //config:	help
 //config:	This allows you to parse /proc/profile for basic profiling.
 
@@ -45,8 +44,8 @@
 //usage:#define readprofile_trivial_usage
 //usage:       "[OPTIONS]"
 //usage:#define readprofile_full_usage "\n\n"
-//usage:       "	-m mapfile	(Default: /boot/System.map)"
-//usage:     "\n	-p profile	(Default: /proc/profile)"
+//usage:       "	-m MAPFILE	(Default: /boot/System.map)"
+//usage:     "\n	-p PROFILE	(Default: /proc/profile)"
 //usage:     "\n	-M NUM		Set the profiling multiplier to NUM"
 //usage:     "\n	-i		Print only info about the sampling step"
 //usage:     "\n	-v		Verbose"

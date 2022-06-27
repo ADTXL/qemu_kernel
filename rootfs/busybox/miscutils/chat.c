@@ -79,7 +79,7 @@
 //kbuild:lib-$(CONFIG_CHAT) += chat.o
 
 //usage:#define chat_trivial_usage
-//usage:       "EXPECT [SEND [EXPECT [SEND...]]]"
+//usage:       "EXPECT [SEND [EXPECT [SEND]]...]"
 //usage:#define chat_full_usage "\n\n"
 //usage:       "Useful for interacting with a modem connected to stdin/stdout.\n"
 //usage:       "A script consists of \"expect-send\" argument pairs.\n"
@@ -379,7 +379,7 @@ int chat_main(int argc UNUSED_PARAM, char **argv)
 					// dump device input if ECHO ON
 					if (echo) {
 //						if (buf[buf_len] < ' ') {
-//							full_write(STDERR_FILENO, "^", 1);
+//							full_write2_str("^");
 //							buf[buf_len] += '@';
 //						}
 						full_write(STDERR_FILENO, buf+buf_len, 1);
@@ -473,7 +473,7 @@ int chat_main(int argc UNUSED_PARAM, char **argv)
 					if ('\\' == c) {
 						c = *++buf;
 						if ('d' == c) {
-							sleep(1);
+							sleep1();
 							len--;
 							continue;
 						}
@@ -509,7 +509,7 @@ int chat_main(int argc UNUSED_PARAM, char **argv)
 #if ENABLE_FEATURE_CHAT_IMPLICIT_CR
 				// or terminate command with \r (if not inhibited)
 				else if (!nocr)
-					xwrite(STDOUT_FILENO, "\r", 1);
+					xwrite_str(STDOUT_FILENO, "\r");
 #endif
 				// bail out unless we sent command successfully
 				if (exitcode)

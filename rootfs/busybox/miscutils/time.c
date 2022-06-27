@@ -33,6 +33,13 @@
 
 #include "libbb.h"
 
+#ifndef HAVE_WAIT3
+static pid_t wait3(int *status, int options, struct rusage *rusage)
+{
+	return wait4(-1, status, options, rusage);
+}
+#endif
+
 /* Information on the resources used by a child process.  */
 typedef struct {
 	int waitstatus;
@@ -111,6 +118,10 @@ static void printargv(char *const *argv)
    This is funky since the pagesize could be less than 1K.
    Note: Some machines express getrusage statistics in terms of K,
    others in terms of pages.  */
+#ifdef BB_ARCH_FIXED_PAGESIZE
+# define pagesize BB_ARCH_FIXED_PAGESIZE
+# define ptok(pagesize, pages) ptok(pages)
+#endif
 static unsigned long ptok(const unsigned pagesize, const unsigned long pages)
 {
 	unsigned long tmp;
@@ -124,6 +135,7 @@ static unsigned long ptok(const unsigned pagesize, const unsigned long pages)
 	tmp = pages * pagesize; /* Larger first, */
 	return tmp / 1024;      /* then smaller.  */
 }
+#undef pagesize
 
 /* summarize: Report on the system use of a command.
 
@@ -177,7 +189,7 @@ static void summarize(const char *fmt, char **command, resource_t *resp)
 {
 	unsigned vv_ms;     /* Elapsed virtual (CPU) milliseconds */
 	unsigned cpu_ticks; /* Same, in "CPU ticks" */
-	unsigned pagesize = getpagesize();
+	unsigned pagesize = bb_getpagesize();
 
 	/* Impossible: we do not use WUNTRACED flag in wait()...
 	if (WIFSTOPPED(resp->waitstatus))

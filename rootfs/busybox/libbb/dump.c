@@ -13,13 +13,19 @@
 #include "libbb.h"
 #include "dump.h"
 
-static const char dot_flags_width_chars[] ALIGN1 = ".#-+ 0123456789";
-
-static const char size_conv_str[] ALIGN1 =
-"\x1\x4\x4\x4\x4\x4\x4\x8\x8\x8\x8\010cdiouxXeEfgG";
-
-static const char int_convs[] ALIGN1 = "diouxX";
-
+#define	F_IGNORE	0x01		/* %_A */
+#define	F_SETREP	0x02		/* rep count set, not default */
+#define	F_ADDRESS	0x001		/* print offset */
+#define	F_BPAD		0x002		/* blank pad */
+#define	F_C		0x004		/* %_c */
+#define	F_CHAR		0x008		/* %c */
+#define	F_DBL		0x010		/* %[EefGf] */
+#define	F_INT		0x020		/* %[di] */
+#define	F_P		0x040		/* %_p */
+#define	F_STR		0x080		/* %s */
+#define	F_U		0x100		/* %_u */
+#define	F_UINT		0x200		/* %[ouXx] */
+#define	F_TEXT		0x400		/* no conversions */
 
 typedef struct priv_dumper_t {
 	dumper_t pub;
@@ -28,7 +34,6 @@ typedef struct priv_dumper_t {
 	FU *endfu;
 	off_t savaddress;        /* saved address/offset in stream */
 	off_t eaddress;          /* end address */
-	off_t address;           /* address/offset in stream */
 	int blocksize;
 	smallint exitval;        /* final exit value */
 
@@ -39,6 +44,13 @@ typedef struct priv_dumper_t {
 	unsigned char *get__savp;
 } priv_dumper_t;
 
+static const char dot_flags_width_chars[] ALIGN1 = ".#-+ 0123456789";
+
+static const char size_conv_str[] ALIGN1 =
+"\x1\x4\x4\x4\x4\x4\x4\x8\x8\x8\x8\010cdiouxXeEfgG";
+
+static const char int_convs[] ALIGN1 = "diouxX";
+
 dumper_t* FAST_FUNC alloc_dumper(void)
 {
 	priv_dumper_t *dumper = xzalloc(sizeof(*dumper));
@@ -47,7 +59,6 @@ dumper_t* FAST_FUNC alloc_dumper(void)
 	dumper->get__ateof = 1;
 	return &dumper->pub;
 }
-
 
 static NOINLINE int bb_dump_size(FS *fs)
 {
@@ -199,7 +210,7 @@ static NOINLINE void rewrite(priv_dumper_t *dumper, FS *fs)
 				pr->bcnt = fu->bcnt;
 				if (fu->bcnt == 0) {
 					if (!prec)
-						bb_simple_error_msg_and_die("%%s needs precision or byte count");
+						bb_simple_error_msg_and_die("%s needs precision or byte count");
 					pr->bcnt = atoi(prec);
 				}
 			} else
@@ -216,7 +227,8 @@ static NOINLINE void rewrite(priv_dumper_t *dumper, FS *fs)
 					if ((p1[2] != 'd') && (p1[2] != 'o') && (p1[2] != 'x')) {
 						goto DO_BAD_CONV_CHAR;
 					}
-					*p1 = p1[2];
+					*p1++ = 'l';
+					*p1++ = 'l';
 					break;
 				case 'c':	/* %_c: chars, \ooo, \n \r \t etc */
 					pr->flags = F_C;
@@ -284,7 +296,9 @@ static NOINLINE void rewrite(priv_dumper_t *dumper, FS *fs)
 	 * repeat it as necessary.
 	 *
 	 * if rep count is greater than 1, no trailing whitespace
-	 * gets output from the last iteration of the format unit.
+	 * gets output from the last iteration of the format unit:
+	 * 2/1 "%02x " prints "XX XX", not "XX XX "
+	 * 2/1 "%02x\n" prints "XX\nXX", not "XX\nXX\n"
 	 */
 	for (fu = fs->nextfu; fu; fu = fu->nextfu) {
 		if (!fu->nextfu
@@ -320,14 +334,14 @@ static void do_skip(priv_dumper_t *dumper, const char *fname)
 	) {
 		/* If st_size is valid and pub.dump_skip >= st_size */
 		dumper->pub.dump_skip -= sbuf.st_size;
-		dumper->address += sbuf.st_size;
+		dumper->pub.address += sbuf.st_size;
 		return;
 	}
 	if (fseeko(stdin, dumper->pub.dump_skip, SEEK_SET)) {
 		bb_simple_perror_msg_and_die(fname);
 	}
-	dumper->address += dumper->pub.dump_skip;
-	dumper->savaddress = dumper->address;
+	dumper->pub.address += dumper->pub.dump_skip;
+	dumper->savaddress = dumper->pub.address;
 	dumper->pub.dump_skip = 0;
 }
 
@@ -342,6 +356,7 @@ static NOINLINE int next(priv_dumper_t *dumper)
 				if (!freopen(fname, "r", stdin)) {
 					bb_simple_perror_msg(fname);
 					dumper->exitval = 1;
+					dumper->next__done = 1;
 					continue;
 				}
 			}
@@ -365,7 +380,7 @@ static unsigned char *get(priv_dumper_t *dumper)
 	int blocksize = dumper->blocksize;
 
 	if (!dumper->get__curp) {
-		dumper->address = (off_t)0; /*DBU:[dave@cray.com] initialize,initialize..*/
+		dumper->pub.address = (off_t)0; /*DBU:[dave@cray.com] initialize,initialize..*/
 		dumper->get__curp = xmalloc(blocksize);
 		dumper->get__savp = xzalloc(blocksize); /* need to be initialized */
 	} else {
@@ -373,7 +388,7 @@ static unsigned char *get(priv_dumper_t *dumper)
 		dumper->get__curp = dumper->get__savp;
 		dumper->get__savp = tmp;
 		dumper->savaddress += blocksize;
-		dumper->address = dumper->savaddress;
+		dumper->pub.address = dumper->savaddress;
 	}
 	need = blocksize;
 	nread = 0;
@@ -394,10 +409,9 @@ static unsigned char *get(priv_dumper_t *dumper)
 				if (dumper->pub.dump_vflag != DUP) {
 					puts("*");
 				}
-				return NULL;
 			}
 			memset(dumper->get__curp + nread, 0, need);
-			dumper->eaddress = dumper->address + nread;
+			dumper->eaddress = dumper->pub.address + nread;
 			return dumper->get__curp;
 		}
 		n = fread(dumper->get__curp + nread, sizeof(unsigned char),
@@ -429,7 +443,7 @@ static unsigned char *get(priv_dumper_t *dumper)
 			}
 			dumper->pub.dump_vflag = DUP;
 			dumper->savaddress += blocksize;
-			dumper->address = dumper->savaddress;
+			dumper->pub.address = dumper->savaddress;
 			need = blocksize;
 			nread = 0;
 		} else {
@@ -453,7 +467,7 @@ static void bpad(PR *pr)
 	for (p2 = ++p1; *p1 && strchr(" -0+#", *p1); ++p1)
 		if (pr->nospace)
 			pr->nospace--;
-	while ((*p2++ = *p1++) != 0)
+	while ((*p2++ = *p1++) != '\0')
 		continue;
 }
 
@@ -520,39 +534,46 @@ static void conv_u(PR *pr, unsigned char *p)
 
 static void display(priv_dumper_t* dumper)
 {
-	FS *fs;
-	FU *fu;
-	PR *pr;
-	int cnt;
-	unsigned char *bp, *savebp;
-	off_t saveaddress;
+	unsigned char *bp;
 	unsigned char savech = '\0';
 
 	while ((bp = get(dumper)) != NULL) {
+		FS *fs;
+		unsigned char *savebp;
+		off_t saveaddress;
+
 		fs = dumper->pub.fshead;
 		savebp = bp;
-		saveaddress = dumper->address;
-		for (; fs; fs = fs->nextfs, bp = savebp, dumper->address = saveaddress) {
+		saveaddress = dumper->pub.address;
+		for (; fs; fs = fs->nextfs, bp = savebp, dumper->pub.address = saveaddress) {
+			FU *fu;
 			for (fu = fs->nextfu; fu; fu = fu->nextfu) {
+				int cnt;
 				if (fu->flags & F_IGNORE) {
 					break;
 				}
 				for (cnt = fu->reps; cnt; --cnt) {
-					for (pr = fu->nextpr; pr; dumper->address += pr->bcnt,
+					PR *pr;
+					for (pr = fu->nextpr; pr; dumper->pub.address += pr->bcnt,
 								bp += pr->bcnt, pr = pr->nextpr) {
-						if (dumper->eaddress && dumper->address >= dumper->eaddress
-						 && !(pr->flags & (F_TEXT | F_BPAD))
+						if (dumper->eaddress
+						 && dumper->pub.address >= dumper->eaddress
 						) {
-							bpad(pr);
+							if (dumper->pub.xxd_eofstring) {
+								/* xxd support: requested to not pad incomplete blocks */
+								fputs_stdout(dumper->pub.xxd_eofstring);
+								return;
+							}
+							if (!(pr->flags & (F_TEXT | F_BPAD)))
+								bpad(pr);
 						}
 						if (cnt == 1 && pr->nospace) {
 							savech = *pr->nospace;
 							*pr->nospace = '\0';
 						}
-/*                      PRINT; */
 						switch (pr->flags) {
 						case F_ADDRESS:
-							printf(pr->fmt, (unsigned) dumper->address);
+							printf(pr->fmt, (unsigned long long) dumper->pub.address + dumper->pub.xxd_displayoff);
 							break;
 						case F_BPAD:
 							printf(pr->fmt, "");
@@ -638,21 +659,23 @@ static void display(priv_dumper_t* dumper)
 			}
 		}
 	}
+
 	if (dumper->endfu) {
+		PR *pr;
 		/*
 		 * if eaddress not set, error or file size was multiple
 		 * of blocksize, and no partial block ever found.
 		 */
 		if (!dumper->eaddress) {
-			if (!dumper->address) {
+			if (!dumper->pub.address) {
 				return;
 			}
-			dumper->eaddress = dumper->address;
+			dumper->eaddress = dumper->pub.address;
 		}
 		for (pr = dumper->endfu->nextpr; pr; pr = pr->nextpr) {
 			switch (pr->flags) {
 			case F_ADDRESS:
-				printf(pr->fmt, (unsigned) dumper->eaddress);
+				printf(pr->fmt, (unsigned long long) dumper->eaddress + dumper->pub.xxd_displayoff);
 				break;
 			case F_TEXT:
 				printf(pr->fmt);
@@ -695,8 +718,7 @@ void FAST_FUNC bb_dump_add(dumper_t* pub_dumper, const char *fmt)
 {
 	const char *p;
 	FS *tfs;
-	FU *tfu, **nextfupp;
-	const char *savep;
+	FU **nextfupp;
 
 	/* start new linked list of format units */
 	tfs = xzalloc(sizeof(FS)); /*DBU:[dave@cray.com] start out NULL */
@@ -713,6 +735,9 @@ void FAST_FUNC bb_dump_add(dumper_t* pub_dumper, const char *fmt)
 	/* take the format string and break it up into format units */
 	p = fmt;
 	for (;;) {
+		FU *tfu;
+		const char *savep;
+
 		p = skip_whitespace(p);
 		if (*p == '\0') {
 			break;

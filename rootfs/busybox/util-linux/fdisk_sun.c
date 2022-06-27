@@ -61,7 +61,7 @@ guess_device_type(void)
 	}
 }
 
-static const char *const sun_sys_types[] = {
+static const char *const sun_sys_types[] ALIGN_PTR = {
 	"\x00" "Empty"       , /* 0            */
 	"\x01" "Boot"        , /* 1            */
 	"\x02" "SunOS root"  , /* 2            */
@@ -133,7 +133,7 @@ static const struct sun_predefined_drives {
 	unsigned short ntrks;
 	unsigned short nsect;
 	unsigned short rspeed;
-} sun_drives[] = {
+} sun_drives[] ALIGN_PTR = {
 	{ "Quantum","ProDrive 80S",1,832,2,834,6,34,3662},
 	{ "Quantum","ProDrive 105S",1,974,2,1019,6,35,3662},
 	{ "CDC","Wren IV 94171-344",3,1545,2,1549,9,46,3600},
@@ -292,10 +292,10 @@ create_sunlabel(void)
 		} else {
 			g_heads = read_int(1, g_heads, 1024, 0, "Heads");
 			g_sectors = read_int(1, g_sectors, 1024, 0, "Sectors/track");
-		if (g_cylinders)
-			g_cylinders = read_int(1, g_cylinders - 2, 65535, 0, "Cylinders");
-		else
-			g_cylinders = read_int(1, 0, 65535, 0, "Cylinders");
+			if (g_cylinders)
+				g_cylinders = read_int(1, g_cylinders - 2, 65535, 0, "Cylinders");
+			else
+				g_cylinders = read_int(1, 0, 65535, 0, "Cylinders");
 			sunlabel->nacyl = SUN_SSWAP16(read_int(0, 2, 65535, 0, "Alternate cylinders"));
 			sunlabel->pcylcount = SUN_SSWAP16(read_int(0, g_cylinders + SUN_SSWAP16(sunlabel->nacyl), 65535, 0, "Physical cylinders"));
 			sunlabel->rspeed = SUN_SSWAP16(read_int(1, 5400, 100000, 0, "Rotation speed (rpm)"));

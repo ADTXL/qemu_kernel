@@ -21,16 +21,16 @@
 //kbuild:lib-$(CONFIG_BB_SYSCTL) += sysctl.o
 
 //usage:#define sysctl_trivial_usage
-//usage:       "-p [-enq] [FILE...] / [-enqaw] [KEY[=VALUE]]..."
+//usage:       "[-enq] { -a | -p [FILE]... | [-w] [KEY[=VALUE]]... }"
 //usage:#define sysctl_full_usage "\n\n"
 //usage:       "Show/set kernel parameters\n"
-//usage:     "\n	-p	Set values from FILEs (default /etc/sysctl.conf)"
 //usage:     "\n	-e	Don't warn about unknown keys"
 //usage:     "\n	-n	Don't show key names"
 //usage:     "\n	-q      Quiet"
 //usage:     "\n	-a	Show all values"
 /* Same as -a, no need to show it */
 /* //usage:     "\n	-A	Show all values in table form" */
+//usage:     "\n	-p	Set values from FILEs (default /etc/sysctl.conf)"
 //usage:     "\n	-w	Set values"
 //usage:
 //usage:#define sysctl_example_usage
@@ -169,13 +169,15 @@ static int sysctl_act_on_setting(char *setting)
 
 	if (fd < 0) {
 		switch (errno) {
-		case EACCES:
-			/* Happens for write-only settings, e.g. net.ipv6.route.flush */
-			goto end;
 		case ENOENT:
 			if (option_mask32 & FLAG_SHOW_KEY_ERRORS)
 				bb_error_msg("error: '%s' is an unknown key", outname);
 			break;
+		case EACCES:
+			/* Happens for write-only settings, e.g. net.ipv6.route.flush */
+			if (!writing)
+				goto end;
+			/* fall through */
 		default:
 			bb_perror_msg("error %sing key '%s'",
 					writing ?
@@ -236,6 +238,7 @@ static int sysctl_act_recursive(const char *path)
 	int retval = 0;
 
 	if (!(option_mask32 & FLAG_WRITE)
+	 && !strchr(path, '=')  /* do not try to resurse on "var=val" */
 	 && stat(path, &buf) == 0
 	 && S_ISDIR(buf.st_mode)
 	) {

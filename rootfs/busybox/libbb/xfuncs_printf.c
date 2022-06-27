@@ -93,31 +93,43 @@ char* FAST_FUNC xstrdup(const char *s)
 // the (possibly truncated to length n) string into it.
 char* FAST_FUNC xstrndup(const char *s, int n)
 {
-	int m;
 	char *t;
 
 	if (ENABLE_DEBUG && s == NULL)
 		bb_simple_error_msg_and_die("xstrndup bug");
 
-	/* We can just xmalloc(n+1) and strncpy into it, */
-	/* but think about xstrndup("abc", 10000) wastage! */
-	m = n;
-	t = (char*) s;
-	while (m) {
-		if (!*t) break;
-		m--;
-		t++;
-	}
-	n -= m;
-	t = xmalloc(n + 1);
-	t[n] = '\0';
+	t = strndup(s, n);
 
-	return memcpy(t, s, n);
+	if (t == NULL)
+		bb_die_memory_exhausted();
+
+	return t;
 }
 
 void* FAST_FUNC xmemdup(const void *s, int n)
 {
 	return memcpy(xmalloc(n), s, n);
+}
+
+void* FAST_FUNC mmap_read(int fd, size_t size)
+{
+	return mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+}
+
+void* FAST_FUNC mmap_anon(size_t size)
+{
+	return mmap(NULL, size,
+			PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS,
+			/* ignored: */ -1, 0);
+}
+
+void* FAST_FUNC xmmap_anon(size_t size)
+{
+	void *p = mmap_anon(size);
+	if (p == MAP_FAILED)
+		bb_die_memory_exhausted();
+	return p;
 }
 
 // Die if we can't open a file and return a FILE* to it.
@@ -212,7 +224,7 @@ int FAST_FUNC rename_or_warn(const char *oldpath, const char *newpath)
 	return n;
 }
 
-void FAST_FUNC xpipe(int filedes[2])
+void FAST_FUNC xpipe(int *filedes)
 {
 	if (pipe(filedes))
 		bb_simple_perror_msg_and_die("can't create pipe");
@@ -304,6 +316,11 @@ int FAST_FUNC fflush_all(void)
 int FAST_FUNC bb_putchar(int ch)
 {
 	return putchar(ch);
+}
+
+int FAST_FUNC fputs_stdout(const char *s)
+{
+	return fputs(s, stdout);
 }
 
 /* Die with an error message if we can't copy an entire FILE* to stdout,
@@ -511,20 +528,20 @@ void FAST_FUNC xfstat(int fd, struct stat *stat_buf, const char *errmsg)
 		bb_simple_perror_msg_and_die(errmsg);
 }
 
+#if ENABLE_SELINUX
 // selinux_or_die() - die if SELinux is disabled.
 void FAST_FUNC selinux_or_die(void)
 {
-#if ENABLE_SELINUX
 	int rc = is_selinux_enabled();
 	if (rc == 0) {
 		bb_simple_error_msg_and_die("SELinux is disabled");
 	} else if (rc < 0) {
 		bb_simple_error_msg_and_die("is_selinux_enabled() failed");
 	}
-#else
-	bb_simple_error_msg_and_die("SELinux support is disabled");
-#endif
 }
+#else
+/* not defined, other code must have no calls to it */
+#endif
 
 int FAST_FUNC ioctl_or_perror_and_die(int fd, unsigned request, void *argp, const char *fmt,...)
 {
@@ -642,14 +659,11 @@ void FAST_FUNC generate_uuid(uint8_t *buf)
 	pid_t pid;
 	int i;
 
-	i = open("/dev/urandom", O_RDONLY);
-	if (i >= 0) {
-		read(i, buf, 16);
-		close(i);
-	}
+	open_read_close("/dev/urandom", buf, 16);
 	/* Paranoia. /dev/urandom may be missing.
 	 * rand() is guaranteed to generate at least [0, 2^15) range,
-	 * but lowest bits in some libc are not so "random".  */
+	 * but lowest bits in some libc are not so "random".
+	 */
 	srand(monotonic_us()); /* pulls in printf */
 	pid = getpid();
 	while (1) {
@@ -692,4 +706,33 @@ void FAST_FUNC xvfork_parent_waits_and_exits(void)
 		_exit(WEXITSTATUS(exit_status));
 	}
 	/* Child continues */
+}
+
+// Useful when we do know that pid is valid, and we just want to wait
+// for it to exit. Not existing pid is fatal. waitpid() status is not returned.
+int FAST_FUNC wait_for_exitstatus(pid_t pid)
+{
+	int exit_status, n;
+
+	n = safe_waitpid(pid, &exit_status, 0);
+	if (n < 0)
+		bb_simple_perror_msg_and_die("waitpid");
+	return exit_status;
+}
+
+void FAST_FUNC xsettimeofday(const struct timeval *tv)
+{
+	if (settimeofday(tv, NULL))
+		bb_simple_perror_msg_and_die("settimeofday");
+}
+
+void FAST_FUNC xgettimeofday(struct timeval *tv)
+{
+#if 0
+	if (gettimeofday(tv, NULL))
+		bb_simple_perror_msg_and_die("gettimeofday");
+#else
+	/* Never fails on Linux */
+	gettimeofday(tv, NULL);
+#endif
 }

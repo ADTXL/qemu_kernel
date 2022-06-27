@@ -214,6 +214,44 @@
 //config:	help
 //config:	Makes httpd send files using GZIP content encoding if the
 //config:	client supports it and a pre-compressed <file>.gz exists.
+//config:
+//config:config FEATURE_HTTPD_ETAG
+//config:	bool "Support caching via ETag header"
+//config:	default y
+//config:	depends on HTTPD
+//config:	help
+//config:	If server responds with ETag then next time client (browser)
+//config:	resend it via If-None-Match header.
+//config:	Then httpd will check if file wasn't modified and if not,
+//config:	return 304 Not Modified status code.
+//config:	The ETag value is constructed from last modification date
+//config:	in unix epoch, and size: "hex(last_mod)-hex(file_size)".
+//config:	It's not completely reliable as hash functions but fair enough.
+//config:
+//config:config FEATURE_HTTPD_LAST_MODIFIED
+//config:	bool "Add Last-Modified header to response"
+//config:	default y
+//config:	depends on HTTPD
+//config:	help
+//config:	The Last-Modified header is used for cache validation.
+//config:	The client sends last seen mtime to server in If-Modified-Since.
+//config:	Both headers MUST be an RFC 1123 formatted, which is hard to parse.
+//config:	Use ETag header instead.
+//config:
+//config:config FEATURE_HTTPD_DATE
+//config:	bool "Add Date header to response"
+//config:	default y
+//config:	depends on HTTPD
+//config:	help
+//config:	RFC2616 says that server MUST add Date header to response.
+//config:	But it is almost useless and can be omitted.
+//config:
+//config:config FEATURE_HTTPD_ACL_IP
+//config:	bool "ACL IP"
+//config:	default y
+//config:	depends on HTTPD
+//config:	help
+//config:	Support IP deny/allow rules
 
 //applet:IF_HTTPD(APPLET(httpd, BB_DIR_USR_SBIN, BB_SUID_DROP))
 
@@ -260,7 +298,18 @@
 # include <sys/sendfile.h>
 #endif
 
+/* see sys/netinet6/in6.h */
+#if defined(__FreeBSD__)
+# define s6_addr32 __u6_addr.__u6_addr32
+#endif
+
 #define DEBUG 0
+
+#if DEBUG
+# define dbg(...) fprintf(stderr, __VA_ARGS__)
+#else
+# define dbg(...) ((void)0)
+#endif
 
 #define IOBUF_SIZE 8192
 #define MAX_HTTP_HEADERS_SIZE (32*1024)
@@ -269,7 +318,7 @@
 
 static const char DEFAULT_PATH_HTTPD_CONF[] ALIGN1 = "/etc";
 static const char HTTPD_CONF[] ALIGN1 = "httpd.conf";
-static const char HTTP_200[] ALIGN1 = "HTTP/1.0 200 OK\r\n";
+static const char HTTP_200[] ALIGN1 = "HTTP/1.1 200 OK\r\n";
 static const char index_html[] ALIGN1 = "index.html";
 
 typedef struct has_next_ptr {
@@ -283,6 +332,7 @@ typedef struct Htaccess {
 	char before_colon[1];  /* really bigger, must be last */
 } Htaccess;
 
+#if ENABLE_FEATURE_HTTPD_ACL_IP
 /* Must have "next" as a first member */
 typedef struct Htaccess_IP {
 	struct Htaccess_IP *next;
@@ -290,6 +340,7 @@ typedef struct Htaccess_IP {
 	unsigned mask;
 	int allow_deny;
 } Htaccess_IP;
+#endif
 
 /* Must have "next" as a first member */
 typedef struct Htaccess_Proxy {
@@ -299,17 +350,11 @@ typedef struct Htaccess_Proxy {
 	char *url_to;
 } Htaccess_Proxy;
 
-typedef enum CGI_type {
-	CGI_NONE = 0,
-	CGI_NORMAL,
-	CGI_INDEX,
-	CGI_INTERPRETER,
-} CGI_type;
-
 enum {
 	HTTP_OK = 200,
 	HTTP_PARTIAL_CONTENT = 206,
 	HTTP_MOVED_TEMPORARILY = 302,
+	HTTP_NOT_MODIFIED = 304,
 	HTTP_BAD_REQUEST = 400,       /* malformed syntax */
 	HTTP_UNAUTHORIZED = 401, /* authentication needed, respond with auth hdr */
 	HTTP_NOT_FOUND = 404,
@@ -327,7 +372,6 @@ enum {
 	HTTP_NO_CONTENT = 204,
 	HTTP_MULTIPLE_CHOICES = 300,
 	HTTP_MOVED_PERMANENTLY = 301,
-	HTTP_NOT_MODIFIED = 304,
 	HTTP_PAYMENT_REQUIRED = 402,
 	HTTP_BAD_GATEWAY = 502,
 	HTTP_SERVICE_UNAVAILABLE = 503, /* overload, maintenance */
@@ -340,6 +384,9 @@ static const uint16_t http_response_type[] ALIGN2 = {
 	HTTP_PARTIAL_CONTENT,
 #endif
 	HTTP_MOVED_TEMPORARILY,
+#if ENABLE_FEATURE_HTTPD_ETAG
+	HTTP_NOT_MODIFIED,
+#endif
 	HTTP_REQUEST_TIMEOUT,
 	HTTP_NOT_IMPLEMENTED,
 #if ENABLE_FEATURE_HTTPD_BASIC_AUTH
@@ -356,7 +403,6 @@ static const uint16_t http_response_type[] ALIGN2 = {
 	HTTP_NO_CONTENT,
 	HTTP_MULTIPLE_CHOICES,
 	HTTP_MOVED_PERMANENTLY,
-	HTTP_NOT_MODIFIED,
 	HTTP_BAD_GATEWAY,
 	HTTP_SERVICE_UNAVAILABLE,
 #endif
@@ -371,6 +417,9 @@ static const struct {
 	{ "Partial Content", NULL },
 #endif
 	{ "Found", NULL },
+#if ENABLE_FEATURE_HTTPD_ETAG
+	{ "Not Modified" },
+#endif
 	{ "Request Timeout", "No request appeared within 60 seconds" },
 	{ "Not Implemented", "The requested method is not recognized" },
 #if ENABLE_FEATURE_HTTPD_BASIC_AUTH
@@ -387,7 +436,6 @@ static const struct {
 	{ "No Content" },
 	{ "Multiple Choices" },
 	{ "Moved Permanently" },
-	{ "Not Modified" },
 	{ "Bad Gateway", "" },
 	{ "Service Unavailable", "" },
 #endif
@@ -401,6 +449,9 @@ struct globals {
 	smallint content_gzip;
 #endif
 	time_t last_mod;
+#if ENABLE_FEATURE_HTTPD_ETAG
+	char *if_none_match;
+#endif
 	char *rmt_ip_str;       /* for $REMOTE_ADDR and $REMOTE_PORT */
 	const char *bind_addr_or_port;
 
@@ -411,7 +462,9 @@ struct globals {
 
 	const char *found_mime_type;
 	const char *found_moved_temporarily;
+#if ENABLE_FEATURE_HTTPD_ACL_IP
 	Htaccess_IP *ip_a_d;    /* config allow/deny lines */
+#endif
 
 	IF_FEATURE_HTTPD_BASIC_AUTH(const char *g_realm;)
 	IF_FEATURE_HTTPD_BASIC_AUTH(char *remoteuser;)
@@ -435,6 +488,9 @@ struct globals {
 #define sizeof_hdr_buf COMMON_BUFSIZE
 	char *hdr_ptr;
 	int hdr_cnt;
+#if ENABLE_FEATURE_HTTPD_ETAG
+	char etag[sizeof("'%llx-%llx'") + 2 * sizeof(long long)*3];
+#endif
 #if ENABLE_FEATURE_HTTPD_ERROR_PAGES
 	const char *http_error_page[ARRAY_SIZE(http_response_type)];
 #endif
@@ -458,7 +514,6 @@ struct globals {
 #define found_mime_type   (G.found_mime_type  )
 #define found_moved_temporarily (G.found_moved_temporarily)
 #define last_mod          (G.last_mod         )
-#define ip_a_d            (G.ip_a_d           )
 #define g_realm           (G.g_realm          )
 #define remoteuser        (G.remoteuser       )
 #define file_size         (G.file_size        )
@@ -499,7 +554,6 @@ enum {
 enum {
 	SEND_HEADERS     = (1 << 0),
 	SEND_BODY        = (1 << 1),
-	SEND_HEADERS_AND_BODY = SEND_HEADERS + SEND_BODY,
 };
 static void send_file_and_exit(const char *url, int what) NORETURN;
 
@@ -519,11 +573,14 @@ static ALWAYS_INLINE void free_Htaccess_list(Htaccess **pptr)
 	free_llist((has_next_ptr**)pptr);
 }
 
+#if ENABLE_FEATURE_HTTPD_ACL_IP
 static ALWAYS_INLINE void free_Htaccess_IP_list(Htaccess_IP **pptr)
 {
 	free_llist((has_next_ptr**)pptr);
 }
+#endif
 
+#if ENABLE_FEATURE_HTTPD_ACL_IP
 /* Returns presumed mask width in bits or < 0 on error.
  * Updates strp, stores IP at provided pointer */
 static int scan_ip(const char **strp, unsigned *ipp, unsigned char endc)
@@ -608,6 +665,7 @@ static int scan_ip_mask(const char *str, unsigned *ipp, unsigned *maskp)
 	*maskp = (uint32_t)(~mask);
 	return 0;
 }
+#endif
 
 /*
  * Parse configuration file into in-memory linked list.
@@ -627,7 +685,7 @@ enum {
 	SIGNALED_PARSE = 1, /* path will be "/etc" */
 	SUBDIR_PARSE   = 2, /* path will be derived from URL */
 };
-static void parse_conf(const char *path, int flag)
+static int parse_conf(const char *path, int flag)
 {
 	/* internally used extra flag state */
 	enum { TRY_CURDIR_PARSE = 3 };
@@ -637,7 +695,9 @@ static void parse_conf(const char *path, int flag)
 	char buf[160];
 
 	/* discard old rules */
-	free_Htaccess_IP_list(&ip_a_d);
+#if ENABLE_FEATURE_HTTPD_ACL_IP
+	free_Htaccess_IP_list(&G.ip_a_d);
+#endif
 	flg_deny_all = 0;
 	/* retain previous auth and mime config only for subdir parse */
 	if (flag != SUBDIR_PARSE) {
@@ -659,7 +719,7 @@ static void parse_conf(const char *path, int flag)
 	while ((f = fopen_for_read(filename)) == NULL) {
 		if (flag >= SUBDIR_PARSE) { /* SUBDIR or TRY_CURDIR */
 			/* config file not found, no changes to config */
-			return;
+			return -1;
 		}
 		if (flag == FIRST_PARSE) {
 			/* -c CONFFILE given, but CONFFILE doesn't exist? */
@@ -742,6 +802,7 @@ static void parse_conf(const char *path, int flag)
 			continue;
 		}
 
+#if ENABLE_FEATURE_HTTPD_ACL_IP
 		if (ch == 'A' || ch == 'D') {
 			Htaccess_IP *pip;
 
@@ -763,13 +824,13 @@ static void parse_conf(const char *path, int flag)
 			pip->allow_deny = ch;
 			if (ch == 'D') {
 				/* Deny:from_IP - prepend */
-				pip->next = ip_a_d;
-				ip_a_d = pip;
+				pip->next = G.ip_a_d;
+				G.ip_a_d = pip;
 			} else {
 				/* A:from_IP - append (thus all D's precedes A's) */
-				Htaccess_IP *prev_IP = ip_a_d;
+				Htaccess_IP *prev_IP = G.ip_a_d;
 				if (prev_IP == NULL) {
-					ip_a_d = pip;
+					G.ip_a_d = pip;
 				} else {
 					while (prev_IP->next)
 						prev_IP = prev_IP->next;
@@ -778,6 +839,7 @@ static void parse_conf(const char *path, int flag)
 			}
 			continue;
 		}
+#endif
 
 #if ENABLE_FEATURE_HTTPD_ERROR_PAGES
 		if (flag == FIRST_PARSE && ch == 'E') {
@@ -915,6 +977,7 @@ static void parse_conf(const char *path, int flag)
 	} /* while (fgets) */
 
 	fclose(f);
+	return 0;
 }
 
 #if ENABLE_FEATURE_HTTPD_ENCODE_URL_STR
@@ -956,41 +1019,9 @@ static char *encodeString(const char *string)
  * Parameter: a pointer to a base64 encoded string.
  * Decoded data is stored in-place.
  */
-static void decodeBase64(char *Data)
+static void decodeBase64(char *data)
 {
-	const unsigned char *in = (const unsigned char *)Data;
-	/* The decoded size will be at most 3/4 the size of the encoded */
-	unsigned ch = 0;
-	int i = 0;
-
-	while (*in) {
-		int t = *in++;
-
-		if (t >= '0' && t <= '9')
-			t = t - '0' + 52;
-		else if (t >= 'A' && t <= 'Z')
-			t = t - 'A';
-		else if (t >= 'a' && t <= 'z')
-			t = t - 'a' + 26;
-		else if (t == '+')
-			t = 62;
-		else if (t == '/')
-			t = 63;
-		else if (t == '=')
-			t = 0;
-		else
-			continue;
-
-		ch = (ch << 6) | t;
-		i++;
-		if (i == 4) {
-			*Data++ = (char) (ch >> 16);
-			*Data++ = (char) (ch >> 8);
-			*Data++ = (char) ch;
-			i = 0;
-		}
-	}
-	*Data = '\0';
+	decode_base64(data, NULL)[0] = '\0';
 }
 #endif
 
@@ -1038,11 +1069,12 @@ static void log_and_exit(void)
  */
 static void send_headers(unsigned responseNum)
 {
+#if ENABLE_FEATURE_HTTPD_DATE || ENABLE_FEATURE_HTTPD_LAST_MODIFIED
 	static const char RFC1123FMT[] ALIGN1 = "%a, %d %b %Y %H:%M:%S GMT";
 	/* Fixed size 29-byte string. Example: Sun, 06 Nov 1994 08:49:37 GMT */
 	char date_str[40]; /* using a bit larger buffer to paranoia reasons */
-
 	struct tm tm;
+#endif
 	const char *responseString = "";
 	const char *infoString = NULL;
 #if ENABLE_FEATURE_HTTPD_ERROR_PAGES
@@ -1050,7 +1082,6 @@ static void send_headers(unsigned responseNum)
 #endif
 	unsigned len;
 	unsigned i;
-	time_t timer = time(NULL);
 
 	for (i = 0; i < ARRAY_SIZE(http_response_type); i++) {
 		if (http_response_type[i] == responseNum) {
@@ -1071,15 +1102,24 @@ static void send_headers(unsigned responseNum)
 	 * always fit into those kbytes.
 	 */
 
-	strftime(date_str, sizeof(date_str), RFC1123FMT, gmtime_r(&timer, &tm));
-	/* ^^^ using gmtime_r() instead of gmtime() to not use static data */
-	len = sprintf(iobuf,
-			"HTTP/1.0 %u %s\r\n"
+	{
+#if ENABLE_FEATURE_HTTPD_DATE
+		time_t timer = time(NULL);
+		strftime(date_str, sizeof(date_str), RFC1123FMT, gmtime_r(&timer, &tm));
+		/* ^^^ using gmtime_r() instead of gmtime() to not use static data */
+#endif
+		len = sprintf(iobuf,
+			"HTTP/1.1 %u %s\r\n"
+#if ENABLE_FEATURE_HTTPD_DATE
 			"Date: %s\r\n"
+#endif
 			"Connection: close\r\n",
-			responseNum, responseString,
-			date_str
-	);
+			responseNum, responseString
+#if ENABLE_FEATURE_HTTPD_DATE
+			,date_str
+#endif
+		);
+	}
 
 	if (responseNum != HTTP_OK || found_mime_type) {
 		len += sprintf(iobuf + len,
@@ -1099,7 +1139,7 @@ static void send_headers(unsigned responseNum)
 #endif
 	if (responseNum == HTTP_MOVED_TEMPORARILY) {
 		/* Responding to "GET /dir" with
-		 * "HTTP/1.0 302 Found" "Location: /dir/"
+		 * "HTTP/1.1 302 Found" "Location: /dir/"
 		 * - IOW, asking them to repeat with a slash.
 		 * Here, overflow IS possible, can't use sprintf:
 		 * mkdir test
@@ -1124,14 +1164,15 @@ static void send_headers(unsigned responseNum)
 			fprintf(stderr, "headers: '%s'\n", iobuf);
 		}
 		full_write(STDOUT_FILENO, iobuf, len);
-		if (DEBUG)
-			fprintf(stderr, "writing error page: '%s'\n", error_page);
+		dbg("writing error page: '%s'\n", error_page);
 		return send_file_and_exit(error_page, SEND_BODY);
 	}
 #endif
 
 	if (file_size != -1) {    /* file */
+#if ENABLE_FEATURE_HTTPD_LAST_MODIFIED
 		strftime(date_str, sizeof(date_str), RFC1123FMT, gmtime_r(&last_mod, &tm));
+#endif
 #if ENABLE_FEATURE_HTTPD_RANGES
 		if (responseNum == HTTP_PARTIAL_CONTENT) {
 			len += sprintf(iobuf + len,
@@ -1176,7 +1217,13 @@ static void send_headers(unsigned responseNum)
 #if ENABLE_FEATURE_HTTPD_RANGES
 			"Accept-Ranges: bytes\r\n"
 #endif
+#if ENABLE_FEATURE_HTTPD_LAST_MODIFIED
 			"Last-Modified: %s\r\n"
+#endif
+#if ENABLE_FEATURE_HTTPD_ETAG
+			"ETag: %s\r\n"
+#endif
+
 	/* Because of 4.4 (5), we can forgo sending of "Content-Length"
 	 * since we close connection afterwards, but it helps clients
 	 * to e.g. estimate download times, show progress bars etc.
@@ -1184,7 +1231,12 @@ static void send_headers(unsigned responseNum)
 	 * but de-facto standard is to send it (see comment below).
 	 */
 			"Content-Length: %"OFF_FMT"u\r\n",
+#if ENABLE_FEATURE_HTTPD_LAST_MODIFIED
 				date_str,
+#endif
+#if ENABLE_FEATURE_HTTPD_ETAG
+				G.etag,
+#endif
 				file_size
 		);
 	}
@@ -1409,7 +1461,7 @@ static NOINLINE void cgi_io_loop_and_exit(int fromCgi_rd, int toCgi_wr, int post
 				count = safe_read(fromCgi_rd, rbuf + out_cnt, IOBUF_SIZE - 8);
 				if (count <= 0) {
 					/* eof (or error) and there was no "HTTP",
-					 * send "HTTP/1.0 200 OK\r\n", then send received data */
+					 * send "HTTP/1.1 200 OK\r\n", then send received data */
 					if (out_cnt) {
 						full_write(STDOUT_FILENO, HTTP_200, sizeof(HTTP_200)-1);
 						full_write(STDOUT_FILENO, rbuf, out_cnt);
@@ -1420,10 +1472,10 @@ static NOINLINE void cgi_io_loop_and_exit(int fromCgi_rd, int toCgi_wr, int post
 				count = 0;
 				/* "Status" header format is: "Status: 302 Redirected\r\n" */
 				if (out_cnt >= 8 && memcmp(rbuf, "Status: ", 8) == 0) {
-					/* send "HTTP/1.0 " */
+					/* send "HTTP/1.1 " */
 					if (full_write(STDOUT_FILENO, HTTP_200, 9) != 9)
 						break;
-					/* skip "Status: " (including space, sending "HTTP/1.0  NNN" is wrong) */
+					/* skip "Status: " (including space, sending "HTTP/1.1  NNN" is wrong) */
 					rbuf += 8;
 					count = out_cnt - 8;
 					out_cnt = -1; /* buffering off */
@@ -1439,7 +1491,7 @@ static NOINLINE void cgi_io_loop_and_exit(int fromCgi_rd, int toCgi_wr, int post
 						full_write(s, "Content-type: text/plain\r\n\r\n", 28);
 					}
 					 * Counter-example of valid CGI without Content-type:
-					 * echo -en "HTTP/1.0 302 Found\r\n"
+					 * echo -en "HTTP/1.1 302 Found\r\n"
 					 * echo -en "Location: http://www.busybox.net\r\n"
 					 * echo -en "\r\n"
 					 */
@@ -1453,8 +1505,7 @@ static NOINLINE void cgi_io_loop_and_exit(int fromCgi_rd, int toCgi_wr, int post
 			}
 			if (full_write(STDOUT_FILENO, rbuf, count) != count)
 				break;
-			if (DEBUG)
-				fprintf(stderr, "cgi read %d bytes: '%.*s'\n", count, count, rbuf);
+			dbg("cgi read %d bytes: '%.*s'\n", count, count, rbuf);
 		} /* if (pfd[FROM_CGI].revents) */
 	} /* while (1) */
 	log_and_exit();
@@ -1546,7 +1597,7 @@ static void send_cgi_and_exit(
 	/* (Older versions of bbox seem to do some decoding) */
 	setenv1("QUERY_STRING", g_query);
 	putenv((char*)"SERVER_SOFTWARE=busybox httpd/"BB_VER);
-	putenv((char*)"SERVER_PROTOCOL=HTTP/1.0");
+	putenv((char*)"SERVER_PROTOCOL=HTTP/1.1");
 	putenv((char*)"GATEWAY_INTERFACE=CGI/1.1");
 	/* Having _separate_ variables for IP and port defeats
 	 * the purpose of having socket abstraction. Which "port"
@@ -1697,10 +1748,10 @@ static NOINLINE void send_file_and_exit(const char *url, int what)
 		}
 	} else {
 		fd = open(url, O_RDONLY);
+		/* file_size and last_mod are already populated */
 	}
 	if (fd < 0) {
-		if (DEBUG)
-			bb_perror_msg("can't open '%s'", url);
+		dbg("can't open '%s'\n", url);
 		/* Error pages are sent by using send_file_and_exit(SEND_BODY).
 		 * IOW: it is unsafe to call send_headers_and_exit
 		 * if what is SEND_BODY! Can recurse! */
@@ -1708,6 +1759,18 @@ static NOINLINE void send_file_and_exit(const char *url, int what)
 			send_headers_and_exit(HTTP_NOT_FOUND);
 		log_and_exit();
 	}
+#if ENABLE_FEATURE_HTTPD_ETAG
+	/* ETag is "hex(last_mod)-hex(file_size)" e.g. "5e132e20-417" */
+	sprintf(G.etag, "\"%llx-%llx\"", (unsigned long long)last_mod, (unsigned long long)file_size);
+
+	if (G.if_none_match) {
+		dbg("If-None-Match:'%s' file's ETag:'%s'\n", G.if_none_match, G.etag);
+		/* Weak ETag comparision.
+		 * If-None-Match may have many ETags but they are quoted so we can use simple substring search */
+		if (strstr(G.if_none_match, G.etag))
+			send_headers_and_exit(HTTP_NOT_MODIFIED);
+	}
+#endif
 	/* If you want to know about EPIPE below
 	 * (happens if you abort downloads from local httpd): */
 	signal(SIGPIPE, SIG_IGN);
@@ -1777,9 +1840,7 @@ static NOINLINE void send_file_and_exit(const char *url, int what)
 		}
 	}
 
-	if (DEBUG)
-		bb_error_msg("sending file '%s' content-type: %s",
-			url, found_mime_type);
+	dbg("sending file '%s' content-type:%s\n", url, found_mime_type);
 
 #if ENABLE_FEATURE_HTTPD_RANGES
 	if (what == SEND_BODY /* err pages and ranges don't mix */
@@ -1808,7 +1869,7 @@ static NOINLINE void send_file_and_exit(const char *url, int what)
 		send_headers(HTTP_OK);
 #if ENABLE_FEATURE_USE_SENDFILE
 	{
-		off_t offset = range_start;
+		off_t offset = (range_start < 0) ? 0 : range_start;
 		while (1) {
 			/* sz is rounded down to 64k */
 			ssize_t sz = MAXINT(ssize_t) - 0xffff;
@@ -1843,14 +1904,13 @@ static NOINLINE void send_file_and_exit(const char *url, int what)
 	log_and_exit();
 }
 
+#if ENABLE_FEATURE_HTTPD_ACL_IP
 static void if_ip_denied_send_HTTP_FORBIDDEN_and_exit(unsigned remote_ip)
 {
 	Htaccess_IP *cur;
 
-	for (cur = ip_a_d; cur; cur = cur->next) {
-#if DEBUG
-		fprintf(stderr,
-			"checkPermIP: '%s' ? '%u.%u.%u.%u/%u.%u.%u.%u'\n",
+	for (cur = G.ip_a_d; cur; cur = cur->next) {
+		dbg("checkPermIP: '%s' ? '%u.%u.%u.%u/%u.%u.%u.%u'\n",
 			rmt_ip_str,
 			(unsigned char)(cur->ip >> 24),
 			(unsigned char)(cur->ip >> 16),
@@ -1861,7 +1921,6 @@ static void if_ip_denied_send_HTTP_FORBIDDEN_and_exit(unsigned remote_ip)
 			(unsigned char)(cur->mask >> 8),
 			(unsigned char)(cur->mask)
 		);
-#endif
 		if ((remote_ip & cur->mask) == cur->ip) {
 			if (cur->allow_deny == 'A')
 				return;
@@ -1872,6 +1931,9 @@ static void if_ip_denied_send_HTTP_FORBIDDEN_and_exit(unsigned remote_ip)
 	if (flg_deny_all) /* depends on whether we saw "D:*" */
 		send_headers_and_exit(HTTP_FORBIDDEN);
 }
+#else
+# define if_ip_denied_send_HTTP_FORBIDDEN_and_exit(arg) ((void)0)
+#endif
 
 #if ENABLE_FEATURE_HTTPD_BASIC_AUTH
 
@@ -1950,8 +2012,7 @@ static int check_user_passwd(const char *path, char *user_and_passwd)
 		if (prev && strcmp(prev, dir_prefix) != 0)
 			continue;
 
-		if (DEBUG)
-			fprintf(stderr, "checkPerm: '%s' ? '%s'\n", dir_prefix, user_and_passwd);
+		dbg("checkPerm: '%s' ? '%s'\n", dir_prefix, user_and_passwd);
 
 		/* If it's not a prefix match, continue searching */
 		len = strlen(dir_prefix);
@@ -2102,23 +2163,31 @@ static void send_REQUEST_TIMEOUT_and_exit(int sig UNUSED_PARAM)
 static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr) NORETURN;
 static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 {
-	static const char request_GET[] ALIGN1 = "GET";
 	struct stat sb;
 	char *urlcopy;
 	char *urlp;
 	char *tptr;
+#if ENABLE_FEATURE_HTTPD_ACL_IP
 	unsigned remote_ip;
+#endif
 #if ENABLE_FEATURE_HTTPD_CGI
 	unsigned total_headers_len;
 #endif
-#if ENABLE_FEATURE_HTTPD_CGI
-	static const char request_HEAD[] ALIGN1 = "HEAD";
 	const char *prequest;
-	unsigned long length = 0;
-	enum CGI_type cgi_type = CGI_NONE;
-#elif ENABLE_FEATURE_HTTPD_PROXY
-#define prequest request_GET
-	unsigned long length = 0;
+	static const char request_GET[]  ALIGN1 = "GET";
+	static const char request_HEAD[] ALIGN1 = "HEAD";
+#if ENABLE_FEATURE_HTTPD_CGI
+	static const char request_POST[] ALIGN1 = "POST";
+	unsigned long POST_length;
+	enum CGI_type {
+		CGI_NONE = 0,
+		CGI_NORMAL,
+		CGI_INDEX,
+		CGI_INTERPRETER,
+	} cgi_type = CGI_NONE;
+#endif
+#if ENABLE_FEATURE_HTTPD_PROXY
+	Htaccess_Proxy *proxy_entry;
 #endif
 #if ENABLE_FEATURE_HTTPD_BASIC_AUTH
 	smallint authorized = -1;
@@ -2129,17 +2198,6 @@ static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 	 * (IOW, server process doesn't need to waste 8k) */
 	iobuf = xmalloc(IOBUF_SIZE);
 
-	remote_ip = 0;
-	if (fromAddr->u.sa.sa_family == AF_INET) {
-		remote_ip = ntohl(fromAddr->u.sin.sin_addr.s_addr);
-	}
-#if ENABLE_FEATURE_IPV6
-	if (fromAddr->u.sa.sa_family == AF_INET6
-	 && fromAddr->u.sin6.sin6_addr.s6_addr32[0] == 0
-	 && fromAddr->u.sin6.sin6_addr.s6_addr32[1] == 0
-	 && ntohl(fromAddr->u.sin6.sin6_addr.s6_addr32[2]) == 0xffff)
-		remote_ip = ntohl(fromAddr->u.sin6.sin6_addr.s6_addr32[3]);
-#endif
 	if (ENABLE_FEATURE_HTTPD_CGI || DEBUG || verbose) {
 		/* NB: can be NULL (user runs httpd -i by hand?) */
 		rmt_ip_str = xmalloc_sockaddr2dotted(&fromAddr->u.sa);
@@ -2151,40 +2209,51 @@ static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 		if (verbose > 2)
 			bb_simple_error_msg("connected");
 	}
+#if ENABLE_FEATURE_HTTPD_ACL_IP
+	remote_ip = 0;
+	if (fromAddr->u.sa.sa_family == AF_INET) {
+		remote_ip = ntohl(fromAddr->u.sin.sin_addr.s_addr);
+	}
+# if ENABLE_FEATURE_IPV6
+	if (fromAddr->u.sa.sa_family == AF_INET6
+	 && fromAddr->u.sin6.sin6_addr.s6_addr32[0] == 0
+	 && fromAddr->u.sin6.sin6_addr.s6_addr32[1] == 0
+	 && ntohl(fromAddr->u.sin6.sin6_addr.s6_addr32[2]) == 0xffff)
+		remote_ip = ntohl(fromAddr->u.sin6.sin6_addr.s6_addr32[3]);
+# endif
 	if_ip_denied_send_HTTP_FORBIDDEN_and_exit(remote_ip);
+#endif
 
 	/* Install timeout handler. get_line() needs it. */
 	signal(SIGALRM, send_REQUEST_TIMEOUT_and_exit);
 
-	if (!get_line()) /* EOF or error or empty line */
-		send_headers_and_exit(HTTP_BAD_REQUEST);
+	if (!get_line()) { /* EOF or error or empty line */
+		/* Observed Firefox to "speculatively" open
+		 * extra connections to a new site on first access,
+		 * they are closed in ~5 seconds with nothing
+		 * being sent at all.
+		 * (Presumably it's a method to decrease latency?)
+		 */
+		if (verbose > 2)
+			bb_simple_error_msg("eof on read, closing");
+		/* Don't bother generating error page in this case,
+		 * just close the socket.
+		 */
+		//send_headers_and_exit(HTTP_BAD_REQUEST);
+		_exit(xfunc_error_retval);
+	}
+	dbg("Request:'%s'\n", iobuf);
 
-	/* Determine type of request (GET/POST) */
+	/* Find URL */
 	// rfc2616: method and URI is separated by exactly one space
 	//urlp = strpbrk(iobuf, " \t"); - no, tab isn't allowed
 	urlp = strchr(iobuf, ' ');
 	if (urlp == NULL)
 		send_headers_and_exit(HTTP_BAD_REQUEST);
 	*urlp++ = '\0';
-#if ENABLE_FEATURE_HTTPD_CGI
-	prequest = request_GET;
-	if (strcasecmp(iobuf, prequest) != 0) {
-		prequest = request_HEAD;
-		if (strcasecmp(iobuf, prequest) != 0) {
-			prequest = "POST";
-			if (strcasecmp(iobuf, prequest) != 0)
-				send_headers_and_exit(HTTP_NOT_IMPLEMENTED);
-		}
-	}
-#else
-	if (strcasecmp(iobuf, request_GET) != 0)
-		send_headers_and_exit(HTTP_NOT_IMPLEMENTED);
-#endif
-	// rfc2616: method and URI is separated by exactly one space
 	//urlp = skip_whitespace(urlp); - should not be necessary
 	if (urlp[0] != '/')
 		send_headers_and_exit(HTTP_BAD_REQUEST);
-
 	/* Find end of URL */
 	HTTP_slash = strchr(urlp, ' ');
 	/* Is it " HTTP/"? */
@@ -2192,47 +2261,61 @@ static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 		send_headers_and_exit(HTTP_BAD_REQUEST);
 	*HTTP_slash++ = '\0';
 
-	/* Copy URL from after "GET "/"POST " to stack-allocated char[] */
-	urlcopy = alloca((HTTP_slash - urlp) + 2 + strlen(index_page));
-	/*if (urlcopy == NULL)
-	 *	send_headers_and_exit(HTTP_INTERNAL_SERVER_ERROR);*/
-	strcpy(urlcopy, urlp);
-	/* NB: urlcopy ptr is never changed after this */
-
 #if ENABLE_FEATURE_HTTPD_PROXY
-	{
+	proxy_entry = find_proxy_entry(urlp);
+	if (proxy_entry) {
 		int proxy_fd;
 		len_and_sockaddr *lsa;
-		Htaccess_Proxy *proxy_entry = find_proxy_entry(urlcopy);
 
-		if (proxy_entry) {
-			if (verbose > 1)
-				bb_error_msg("proxy:%s", urlcopy);
-			lsa = host2sockaddr(proxy_entry->host_port, 80);
-			if (!lsa)
-				send_headers_and_exit(HTTP_INTERNAL_SERVER_ERROR);
-			proxy_fd = socket(lsa->u.sa.sa_family, SOCK_STREAM, 0);
-			if (proxy_fd < 0)
-				send_headers_and_exit(HTTP_INTERNAL_SERVER_ERROR);
-			if (connect(proxy_fd, &lsa->u.sa, lsa->len) < 0)
-				send_headers_and_exit(HTTP_INTERNAL_SERVER_ERROR);
-			/* Disable peer header reading timeout */
-			alarm(0);
-			/* Config directive was of the form:
-			 *   P:/url:[http://]hostname[:port]/new/path
-			 * When /urlSFX is requested, reverse proxy it
-			 * to http://hostname[:port]/new/pathSFX
-			 */
-			fdprintf(proxy_fd, "%s %s%s %s\r\n",
-					prequest, /* "GET" or "POST" */
-					proxy_entry->url_to, /* "/new/path" */
-					urlcopy + strlen(proxy_entry->url_from), /* "SFX" */
-					HTTP_slash /* "HTTP/xyz" */
-			);
-			cgi_io_loop_and_exit(proxy_fd, proxy_fd, /*max POST length:*/ INT_MAX);
-		}
+		if (verbose > 1)
+			bb_error_msg("proxy:%s", urlp);
+		lsa = host2sockaddr(proxy_entry->host_port, 80);
+		if (!lsa)
+			send_headers_and_exit(HTTP_INTERNAL_SERVER_ERROR);
+		proxy_fd = socket(lsa->u.sa.sa_family, SOCK_STREAM, 0);
+		if (proxy_fd < 0)
+			send_headers_and_exit(HTTP_INTERNAL_SERVER_ERROR);
+		if (connect(proxy_fd, &lsa->u.sa, lsa->len) < 0)
+			send_headers_and_exit(HTTP_INTERNAL_SERVER_ERROR);
+		/* Disable peer header reading timeout */
+		alarm(0);
+		/* Config directive was of the form:
+		 *   P:/url:[http://]hostname[:port]/new/path
+		 * When /urlSFX is requested, reverse proxy it
+		 * to http://hostname[:port]/new/pathSFX
+		 */
+		fdprintf(proxy_fd, "%s %s%s %s\r\n",
+				iobuf, /* "GET" / "POST" / etc */
+				proxy_entry->url_to, /* "/new/path" */
+				urlp + strlen(proxy_entry->url_from), /* "SFX" */
+				HTTP_slash /* "HTTP/xyz" */
+		);
+		cgi_io_loop_and_exit(proxy_fd, proxy_fd, /*max POST length:*/ INT_MAX);
 	}
 #endif
+
+	/* Determine type of request (GET/POST/...) */
+	prequest = request_GET;
+	if (strcasecmp(iobuf, prequest) == 0)
+		goto found;
+	prequest = request_HEAD;
+	if (strcasecmp(iobuf, prequest) == 0)
+		goto found;
+#if !ENABLE_FEATURE_HTTPD_CGI
+	send_headers_and_exit(HTTP_NOT_IMPLEMENTED);
+#else
+	prequest = request_POST;
+	if (strcasecmp(iobuf, prequest) == 0)
+		goto found;
+	/* For CGI, allow DELETE, PUT, OPTIONS, etc too */
+	prequest = alloca(16);
+	safe_strncpy((char*)prequest, iobuf, 16);
+#endif
+ found:
+	/* Copy URL to stack-allocated char[] */
+	urlcopy = alloca((HTTP_slash - urlp) + 2 + strlen(index_page));
+	strcpy(urlcopy, urlp);
+	/* NB: urlcopy ptr is never changed after this */
 
 	/* Extract url args if present */
 	g_query = strchr(urlcopy, '?');
@@ -2252,7 +2335,7 @@ static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 	/* Algorithm stolen from libbb bb_simplify_path(),
 	 * but don't strdup, retain trailing slash, protect root */
 	urlp = tptr = urlcopy;
-	for (;;) {
+	while (1) {
 		if (*urlp == '/') {
 			/* skip duplicate (or initial) slash */
 			if (*tptr == '/') {
@@ -2283,13 +2366,6 @@ static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 		tptr++;
 	}
 
-	/* If URL is a directory, add '/' */
-	if (urlp[-1] != '/') {
-		if (is_directory(urlcopy + 1, /*followlinks:*/ 1)) {
-			found_moved_temporarily = urlcopy;
-		}
-	}
-
 	/* Log it */
 	if (verbose > 1)
 		bb_error_msg("url:%s", urlcopy);
@@ -2298,11 +2374,9 @@ static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 	while ((tptr = strchr(tptr + 1, '/')) != NULL) {
 		/* have path1/path2 */
 		*tptr = '\0';
-		if (is_directory(urlcopy + 1, /*followlinks:*/ 1)) {
-			/* may have subdir config */
-			parse_conf(urlcopy + 1, SUBDIR_PARSE);
+		/* may have subdir config */
+		if (parse_conf(urlcopy + 1, SUBDIR_PARSE) == 0)
 			if_ip_denied_send_HTTP_FORBIDDEN_and_exit(remote_ip);
-		}
 		*tptr = '/';
 	}
 
@@ -2329,36 +2403,45 @@ static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 		strcpy(urlp, index_page);
 	}
 	if (stat(tptr, &sb) == 0) {
+		/* If URL is a directory with no slash, set up
+		 * "HTTP/1.1 302 Found" "Location: /dir/" reply */
+		if (urlp[-1] != '/' && S_ISDIR(sb.st_mode)) {
+			found_moved_temporarily = urlcopy;
+		} else {
 #if ENABLE_FEATURE_HTTPD_CONFIG_WITH_SCRIPT_INTERPR
-		char *suffix = strrchr(tptr, '.');
-		if (suffix) {
-			Htaccess *cur;
-			for (cur = script_i; cur; cur = cur->next) {
-				if (strcmp(cur->before_colon + 1, suffix) == 0) {
-					cgi_type = CGI_INTERPRETER;
-					break;
+			char *suffix = strrchr(tptr, '.');
+			if (suffix) {
+				Htaccess *cur;
+				for (cur = script_i; cur; cur = cur->next) {
+					if (strcmp(cur->before_colon + 1, suffix) == 0) {
+						cgi_type = CGI_INTERPRETER;
+						break;
+					}
 				}
 			}
-		}
 #endif
-		if (!found_moved_temporarily) {
 			file_size = sb.st_size;
 			last_mod = sb.st_mtime;
 		}
 	}
 #if ENABLE_FEATURE_HTTPD_CGI
 	else if (urlp[-1] == '/') {
-		/* It's a dir URL and there is no index.html
-		 * Try cgi-bin/index.cgi */
-		if (access("/cgi-bin/index.cgi"+1, X_OK) == 0) {
-			cgi_type = CGI_INDEX;
-		}
+		/* It's a dir URL and there is no index.html */
+		/* Is there cgi-bin/index.cgi? */
+		if (access("/cgi-bin/index.cgi"+1, X_OK) != 0)
+			send_headers_and_exit(HTTP_NOT_FOUND); /* no */
+		cgi_type = CGI_INDEX;
 	}
 #endif
+
+#if ENABLE_FEATURE_HTTPD_BASIC_AUTH || ENABLE_FEATURE_HTTPD_CGI
+	/* check_user_passwd() would be confused by added .../index.html, truncate it */
 	urlp[0] = '\0';
+#endif
 
 #if ENABLE_FEATURE_HTTPD_CGI
 	total_headers_len = 0;
+	POST_length = 0;
 #endif
 
 	/* Read until blank line */
@@ -2372,26 +2455,18 @@ static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 		if (total_headers_len >= MAX_HTTP_HEADERS_SIZE)
 			send_headers_and_exit(HTTP_ENTITY_TOO_LARGE);
 #endif
-		if (DEBUG)
-			bb_error_msg("header: '%s'", iobuf);
-#if ENABLE_FEATURE_HTTPD_CGI || ENABLE_FEATURE_HTTPD_PROXY
-		/* Try and do our best to parse more lines */
-		if (STRNCASECMP(iobuf, "Content-Length:") == 0) {
-			/* extra read only for POST */
-			if (prequest != request_GET
-# if ENABLE_FEATURE_HTTPD_CGI
-			 && prequest != request_HEAD
-# endif
-			) {
-				tptr = skip_whitespace(iobuf + sizeof("Content-Length:") - 1);
-				if (!tptr[0])
-					send_headers_and_exit(HTTP_BAD_REQUEST);
-				/* not using strtoul: it ignores leading minus! */
-				length = bb_strtou(tptr, NULL, 10);
-				/* length is "ulong", but we need to pass it to int later */
-				if (errno || length > INT_MAX)
-					send_headers_and_exit(HTTP_BAD_REQUEST);
-			}
+		dbg("header:'%s'\n", iobuf);
+#if ENABLE_FEATURE_HTTPD_CGI
+		/* Only POST needs to know POST_length */
+		if (prequest == request_POST && STRNCASECMP(iobuf, "Content-Length:") == 0) {
+			tptr = skip_whitespace(iobuf + sizeof("Content-Length:") - 1);
+			if (!tptr[0])
+				send_headers_and_exit(HTTP_BAD_REQUEST);
+			/* not using strtoul: it ignores leading minus! */
+			POST_length = bb_strtou(tptr, NULL, 10);
+			/* length is "ulong", but we need to pass it to int later */
+			if (errno || POST_length > INT_MAX)
+				send_headers_and_exit(HTTP_BAD_REQUEST);
 			continue;
 		}
 #endif
@@ -2415,8 +2490,8 @@ static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 		if (STRNCASECMP(iobuf, "Range:") == 0) {
 			/* We know only bytes=NNN-[MMM] */
 			char *s = skip_whitespace(iobuf + sizeof("Range:")-1);
-			if (is_prefixed_with(s, "bytes=")) {
-				s += sizeof("bytes=")-1;
+			s = is_prefixed_with(s, "bytes=");
+			if (s) {
 				range_start = BB_STRTOOFF(s, &s, 10);
 				if (s[0] != '-' || range_start < 0) {
 					range_start = -1;
@@ -2444,6 +2519,13 @@ static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 					content_gzip = 1;
 				//}
 			}
+			continue;
+		}
+#endif
+#if ENABLE_FEATURE_HTTPD_ETAG
+		if (STRNCASECMP(iobuf, "If-None-Match:") == 0) {
+			free(G.if_none_match);
+			G.if_none_match = xstrdup(skip_whitespace(iobuf + sizeof("If-None-Match:") - 1));
 			continue;
 		}
 #endif
@@ -2494,37 +2576,36 @@ static void handle_incoming_and_exit(const len_and_sockaddr *fromAddr)
 		send_headers_and_exit(HTTP_UNAUTHORIZED);
 #endif
 
-	if (found_moved_temporarily) {
+	if (found_moved_temporarily)
 		send_headers_and_exit(HTTP_MOVED_TEMPORARILY);
-	}
-
-	tptr = urlcopy + 1;      /* skip first '/' */
 
 #if ENABLE_FEATURE_HTTPD_CGI
 	if (cgi_type != CGI_NONE) {
 		send_cgi_and_exit(
 			(cgi_type == CGI_INDEX) ? "/cgi-bin/index.cgi"
 			/*CGI_NORMAL or CGI_INTERPRETER*/ : urlcopy,
-			urlcopy, prequest, length
+			urlcopy, prequest, POST_length
 		);
 	}
 #endif
 
-	if (urlp[-1] == '/') {
-		strcpy(urlp, index_page);
-	}
-
 #if ENABLE_FEATURE_HTTPD_CGI
 	if (prequest != request_GET && prequest != request_HEAD) {
-		/* POST for files does not make sense */
+		/* POST / DELETE / PUT / OPTIONS for files do not make sense */
 		send_headers_and_exit(HTTP_NOT_IMPLEMENTED);
 	}
-	send_file_and_exit(tptr,
-		(prequest != request_HEAD ? SEND_HEADERS_AND_BODY : SEND_HEADERS)
-	);
 #else
-	send_file_and_exit(tptr, SEND_HEADERS_AND_BODY);
+	/* !CGI: it can be only GET or HEAD */
 #endif
+
+#if ENABLE_FEATURE_HTTPD_BASIC_AUTH
+	/* Restore truncated .../index.html */
+	if (urlp[-1] == '/')
+		urlp[0] = index_page[0];
+#endif
+	send_file_and_exit(urlcopy + 1,
+		(prequest != request_HEAD ? (SEND_HEADERS + SEND_BODY) : SEND_HEADERS)
+	);
 }
 
 /*
@@ -2551,6 +2632,13 @@ static void mini_httpd(int server_socket)
 		n = accept(server_socket, &fromAddr.u.sa, &fromAddr.len);
 		if (n < 0)
 			continue;
+//TODO: we can reject connects from denied IPs right away;
+//also, we might want to do one MSG_DONTWAIT'ed recv() here
+//to detect immediate EOF,
+//to avoid forking a whole new process for attackers
+//who open and close lots of connections.
+//(OTOH, the real mitigtion for this sort of thing is
+//to ratelimit connects in iptables)
 
 		/* set the KEEPALIVE option to cull dead connections */
 		setsockopt_keepalive(n);
@@ -2705,12 +2793,12 @@ int httpd_main(int argc UNUSED_PARAM, char **argv)
 			, &verbose
 		);
 	if (opt & OPT_DECODE_URL) {
-		fputs(percent_decode_in_place(url_for_decode, /*strict:*/ 0), stdout);
+		fputs_stdout(percent_decode_in_place(url_for_decode, /*strict:*/ 0));
 		return 0;
 	}
 #if ENABLE_FEATURE_HTTPD_ENCODE_URL_STR
 	if (opt & OPT_ENCODE_URL) {
-		fputs(encodeString(url_for_encode), stdout);
+		fputs_stdout(encodeString(url_for_encode));
 		return 0;
 	}
 #endif
@@ -2734,10 +2822,15 @@ int httpd_main(int argc UNUSED_PARAM, char **argv)
 #if !BB_MMU
 	if (!(opt & OPT_FOREGROUND)) {
 		bb_daemonize_or_rexec(0, argv); /* don't change current directory */
+		re_execed = 0; /* for the following chdir to work */
 	}
 #endif
+	/* Chdir to home (unless we were re_exec()ed for NOMMU case
+	 * in mini_httpd_nommu(): we are already in the home dir then).
+	 */
+	if (!re_execed)
+		xchdir(home_httpd);
 
-	xchdir(home_httpd);
 	if (!(opt & OPT_INETD)) {
 		signal(SIGCHLD, SIG_IGN);
 		server_socket = openServer();

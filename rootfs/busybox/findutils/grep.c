@@ -57,14 +57,12 @@
 #include "common_bufsiz.h"
 #include "xregex.h"
 
-
-/* options */
 //usage:#define grep_trivial_usage
 //usage:       "[-HhnlLoqvsrRiwFE"
 //usage:	IF_EXTRA_COMPAT("z")
 //usage:       "] [-m N] "
-//usage:	IF_FEATURE_GREP_CONTEXT("[-A/B/C N] ")
-//usage:       "PATTERN/-e PATTERN.../-f FILE [FILE]..."
+//usage:	IF_FEATURE_GREP_CONTEXT("[-A|B|C N] ")
+//usage:       "{ PATTERN | -e PATTERN... | -f FILE... } [FILE]..."
 //usage:#define grep_full_usage "\n\n"
 //usage:       "Search for PATTERN in FILEs (or stdin)\n"
 //usage:     "\n	-H	Add 'filename:' prefix"
@@ -167,13 +165,11 @@ enum {
 	OPT_z = IF_EXTRA_COMPAT(            (1 << OPTBIT_z)) + 0,
 };
 
-#define PRINT_FILES_WITH_MATCHES    (option_mask32 & OPT_l)
 #define PRINT_LINE_NUM              (option_mask32 & OPT_n)
 #define BE_QUIET                    (option_mask32 & OPT_q)
 #define SUPPRESS_ERR_MSGS           (option_mask32 & OPT_s)
 #define PRINT_MATCH_COUNTS          (option_mask32 & OPT_c)
 #define FGREP_FLAG                  (option_mask32 & OPT_F)
-#define PRINT_FILES_WITHOUT_MATCHES (option_mask32 & OPT_L)
 #define NUL_DELIMITED               (option_mask32 & OPT_z)
 
 struct globals {
@@ -476,13 +472,13 @@ static int grep_file(FILE *file)
 					 * even if errors were detected" */
 					exit(EXIT_SUCCESS);
 				}
-				/* if we're just printing filenames, we stop after the first match */
-				if (PRINT_FILES_WITH_MATCHES) {
+				/* -l "print filenames with matches": stop after the first match */
+				if (option_mask32 & OPT_l) {
 					puts(cur_file);
-					/* fall through to "return 1" */
+					return 1;
 				}
-				/* OPT_L aka PRINT_FILES_WITHOUT_MATCHES: return early */
-				return 1; /* one match */
+				/* -L "print filenames without matches": return early too */
+				return 0; /* 0: we do not print fname, hence it's "not a match" */
 			}
 
 #if ENABLE_FEATURE_GREP_CONTEXT
@@ -602,15 +598,16 @@ static int grep_file(FILE *file)
 		printf("%d\n", nmatches);
 	}
 
-	/* grep -L: print just the filename */
-	if (PRINT_FILES_WITHOUT_MATCHES) {
+	/* grep -L: "print filenames without matches" */
+	if (option_mask32 & OPT_L) {
 		/* nmatches is zero, no need to check it:
-		 * we return 1 early if we detected a match
-		 * and PRINT_FILES_WITHOUT_MATCHES is set */
+		 * we return 0 early if -L and we detect a match
+		 */
 		puts(cur_file);
+		return 1; /* 1: we printed fname, hence it's "a match" */
 	}
 
-	return nmatches;
+	return nmatches != 0; /* we return not a count, but a boolean */
 }
 
 #if ENABLE_FEATURE_CLEAN_UP
@@ -650,10 +647,16 @@ static void load_regexes_from_file(llist_t *fopt)
 	}
 }
 
-static int FAST_FUNC file_action_grep(const char *filename,
-			struct stat *statbuf,
-			void* matched,
-			int depth UNUSED_PARAM)
+static void load_pattern_list(llist_t **lst, char *pattern)
+{
+	char *p;
+	while ((p = strsep(&pattern, "\n")) != NULL)
+		llist_add_to(lst, new_grep_list_data(p, 0));
+}
+
+static int FAST_FUNC file_action_grep(struct recursive_state *state UNUSED_PARAM,
+		const char *filename,
+		struct stat *statbuf)
 {
 	FILE *file;
 
@@ -680,7 +683,7 @@ static int FAST_FUNC file_action_grep(const char *filename,
 		return 0;
 	}
 	cur_file = filename;
-	*(int*)matched += grep_file(file);
+	*(int*)state->userData |= grep_file(file);
 	fclose(file);
 	return 1;
 }
@@ -688,15 +691,16 @@ static int FAST_FUNC file_action_grep(const char *filename,
 static int grep_dir(const char *dir)
 {
 	int matched = 0;
-	recursive_action(dir,
-		/* recurse=yes */ ACTION_RECURSE |
-		/* followLinks=always */ ((option_mask32 & OPT_R) ? ACTION_FOLLOWLINKS : 0) |
-		/* followLinks=command line only */ ACTION_FOLLOWLINKS_L0 |
-		/* depthFirst=yes */ ACTION_DEPTHFIRST,
+	recursive_action(dir, 0
+		| ACTION_RECURSE
+		| ((option_mask32 & OPT_R) ? ACTION_FOLLOWLINKS : 0)
+		| ACTION_FOLLOWLINKS_L0 /* grep -r ... SYMLINK follows it */
+		| ACTION_DEPTHFIRST
+		| 0,
 		/* fileAction= */ file_action_grep,
 		/* dirAction= */ NULL,
-		/* userData= */ &matched,
-		/* depth= */ 0);
+		/* userData= */ &matched
+	);
 	return matched;
 }
 
@@ -754,16 +758,19 @@ int grep_main(int argc UNUSED_PARAM, char **argv)
 #endif
 	invert_search = ((option_mask32 & OPT_v) != 0); /* 0 | 1 */
 
-	{	/* convert char **argv to grep_list_data_t */
-		llist_t *cur;
+	{	/* convert char **argv to pattern_list */
+		llist_t *cur, *new = NULL;
 		for (cur = pattern_head; cur; cur = cur->link)
-			cur->data = new_grep_list_data(cur->data, 0);
+			load_pattern_list(&new, cur->data);
+		llist_free(pattern_head, NULL);
+		pattern_head = new;
 	}
 	if (option_mask32 & OPT_f) {
 		load_regexes_from_file(fopt);
 		if (!pattern_head) { /* -f EMPTY_FILE? */
-			/* GNU grep treats it as "nothing matches" */
-			llist_add_to(&pattern_head, new_grep_list_data((char*) "", 0));
+			/* GNU grep treats it as "nothing matches" except when -x */
+			const char *data = (option_mask32 & OPT_x) ? ".*" : "";
+			llist_add_to(&pattern_head, new_grep_list_data((char*)data, 0));
 			invert_search ^= 1;
 		}
 	}
@@ -805,11 +812,9 @@ int grep_main(int argc UNUSED_PARAM, char **argv)
 	/* if we didn't get a pattern from -e and no command file was specified,
 	 * first parameter should be the pattern. no pattern, no worky */
 	if (pattern_head == NULL) {
-		char *pattern;
 		if (*argv == NULL)
 			bb_show_usage();
-		pattern = new_grep_list_data(*argv++, 0);
-		llist_add_to(&pattern_head, pattern);
+		load_pattern_list(&pattern_head, *argv++);
 	}
 
 	/* argv[0..(argc-1)] should be names of file to grep through. If
@@ -836,7 +841,7 @@ int grep_main(int argc UNUSED_PARAM, char **argv)
 				if (stat(cur_file, &st) == 0 && S_ISDIR(st.st_mode)) {
 					if (!(option_mask32 & OPT_h))
 						print_filename = 1;
-					matched += grep_dir(cur_file);
+					matched |= grep_dir(cur_file);
 					goto grep_done;
 				}
 			}
@@ -849,7 +854,7 @@ int grep_main(int argc UNUSED_PARAM, char **argv)
 				continue;
 			}
 		}
-		matched += grep_file(file);
+		matched |= grep_file(file);
 		fclose_if_not_stdin(file);
  grep_done: ;
 	} while (*argv && *++argv);

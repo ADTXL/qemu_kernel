@@ -113,13 +113,24 @@ enum {
 };
 
 /* Is this a valid filename (upper/lower alpha, digits,
- * underscores, and hyphens only?)
+ * underscores, hyphens, and non-leading dots only?)
  */
 static bool invalid_name(const char *c)
 {
 	c = bb_basename(c);
 
-	while (*c && (isalnum(*c) || *c == '_' || *c == '-'))
+	if (*c == '.')
+		return *c;
+
+	/* Debian run-parts 4.8.3, manpage:
+	 * "...the names must consist entirely of ASCII letters,
+	 * ASCII digits, ASCII underscores, and ASCII minus-hyphens.
+	 * However, the name must not begin with a period."
+	 * The last sentence is a giveaway that something is fishy
+	 * (why mention leading dot if dots are not allowed anyway?).
+	 * Yes, you guessed it right: in fact non-leading dots ARE allowed.
+	 */
+	while (isalnum(*c) || *c == '_' || *c == '-' || *c == '.')
 		c++;
 
 	return *c; /* TRUE (!0) if terminating NUL is not reached */
@@ -131,12 +142,13 @@ static int bb_alphasort(const void *p1, const void *p2)
 	return (option_mask32 & OPT_r) ? -r : r;
 }
 
-static int FAST_FUNC act(const char *file, struct stat *statbuf, void *args UNUSED_PARAM, int depth)
+static int FAST_FUNC act(struct recursive_state *state,
+		const char *file, struct stat *statbuf)
 {
-	if (depth == 1)
+	if (state->depth == 0)
 		return TRUE;
 
-	if (depth == 2
+	if (state->depth == 1
 	 && (  !(statbuf->st_mode & (S_IFREG | S_IFLNK))
 	    || invalid_name(file)
 	    || (!(option_mask32 & OPT_l) && access(file, X_OK) != 0))
@@ -199,9 +211,8 @@ int run_parts_main(int argc UNUSED_PARAM, char **argv)
 			ACTION_RECURSE|ACTION_FOLLOWLINKS,
 			act,            /* file action */
 			act,            /* dir action */
-			NULL,           /* user data */
-			1               /* depth */
-		);
+			NULL            /* user data */
+	);
 
 	if (!names)
 		return 0;

@@ -12,14 +12,12 @@
 //config:config LOADFONT
 //config:	bool "loadfont (5.2 kb)"
 //config:	default y
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	This program loads a console font from standard input.
 //config:
 //config:config SETFONT
 //config:	bool "setfont (24 kb)"
 //config:	default y
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	Allows to load console screen map. Useful for i18n.
 //config:
@@ -401,7 +399,7 @@ setfont [-O font+umap.orig] [-o font.orig] [-om cmap.orig]
 -V     Version
 */
 //usage:#define setfont_trivial_usage
-//usage:       "FONT [-m MAPFILE] [-C TTY]"
+//usage:       "[-m MAPFILE] [-C TTY] FILE"
 //usage:#define setfont_full_usage "\n\n"
 //usage:       "Load a console font\n"
 //usage:     "\n	-m MAPFILE	Load console screen map"

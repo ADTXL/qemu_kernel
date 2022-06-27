@@ -60,6 +60,11 @@
 //usage:     "\n	-f	Don't authenticate (user already authenticated)"
 //usage:     "\n	-h HOST	Host user came from (for network logins)"
 //usage:     "\n	-p	Preserve environment"
+//usage:     "\n"
+//usage:     "\n$LOGIN_TIMEOUT		Seconds (default 60, 0 - disable)"
+//usage:	IF_LOGIN_SCRIPTS(
+//usage:     "\n$LOGIN_PRE_SUID_SCRIPT	Execute before user ID change"
+//usage:	)
 
 #include "libbb.h"
 #include "common_bufsiz.h"
@@ -130,7 +135,6 @@ static const struct pam_conv conv = {
 #endif
 
 enum {
-	TIMEOUT = 60,
 	EMPTY_USERNAME_COUNT = 10,
 	/* Some users found 32 chars limit to be too low: */
 	USERNAME_SIZE = 64,
@@ -139,6 +143,7 @@ enum {
 
 struct globals {
 	struct termios tty_attrs;
+	int timeout;
 } FIX_ALIASING;
 #define G (*(struct globals*)bb_common_bufsiz1)
 #define INIT_G() do { setup_common_bufsiz(); } while (0)
@@ -302,7 +307,7 @@ static void alarm_handler(int sig UNUSED_PARAM)
 	 * when you are back at shell prompt, echo will be still off.
 	 */
 	tcsetattr_stdin_TCSANOW(&G.tty_attrs);
-	printf("\r\nLogin timed out after %u seconds\r\n", TIMEOUT);
+	printf("\r\nLogin timed out after %u seconds\r\n", G.timeout);
 	fflush_all();
 	/* unix API is brain damaged regarding O_NONBLOCK,
 	 * we should undo it, or else we can affect other processes */
@@ -341,8 +346,11 @@ int login_main(int argc UNUSED_PARAM, char **argv)
 #if ENABLE_LOGIN_SESSION_AS_CHILD
 	pid_t child_pid;
 #endif
+	IF_FEATURE_UTMP(pid_t my_pid;)
 
 	INIT_G();
+
+	G.timeout = xatoi_positive(getenv("LOGIN_TIMEOUT") ? : "60");
 
 	/* More of suid paranoia if called by non-root: */
 	/* Clear dangerous stuff, set PATH */
@@ -375,7 +383,7 @@ int login_main(int argc UNUSED_PARAM, char **argv)
 
 	/* We install timeout handler only _after_ we saved G.tty_attrs */
 	signal(SIGALRM, alarm_handler);
-	alarm(TIMEOUT);
+	alarm(G.timeout);
 
 	/* Find out and memorize our tty name */
 	full_tty = xmalloc_ttyname(STDIN_FILENO);
@@ -434,6 +442,9 @@ int login_main(int argc UNUSED_PARAM, char **argv)
 		}
 		/* check that the account is healthy */
 		pamret = pam_acct_mgmt(pamh, 0);
+		if (pamret == PAM_NEW_AUTHTOK_REQD) {
+			pamret = pam_chauthtok(pamh, PAM_CHANGE_EXPIRED_AUTHTOK);
+		}
 		if (pamret != PAM_SUCCESS) {
 			failed_msg = "acct_mgmt";
 			goto pam_auth_failed;
@@ -504,16 +515,14 @@ int login_main(int argc UNUSED_PARAM, char **argv)
 #endif /* ENABLE_PAM */
  auth_failed:
 		opt &= ~LOGIN_OPT_f;
-		bb_do_delay(LOGIN_FAIL_DELAY);
+		pause_after_failed_login();
 		/* TODO: doesn't sound like correct English phrase to me */
 		puts("Login incorrect");
+		syslog(LOG_WARNING, "invalid password for '%s'%s",
+					username, fromhost);
 		if (++count == 3) {
-			syslog(LOG_WARNING, "invalid password for '%s'%s",
-						username, fromhost);
-
 			if (ENABLE_FEATURE_CLEAN_UP)
 				free(fromhost);
-
 			return EXIT_FAILURE;
 		}
 		username[0] = '\0';
@@ -525,6 +534,9 @@ int login_main(int argc UNUSED_PARAM, char **argv)
 	if (pw->pw_uid != 0)
 		die_if_nologin();
 
+	IF_FEATURE_UTMP(my_pid = getpid();)
+	update_utmp(my_pid, USER_PROCESS, short_tty, username, run_by_root ? opt_host : NULL);
+
 #if ENABLE_LOGIN_SESSION_AS_CHILD
 	child_pid = vfork();
 	if (child_pid != 0) {
@@ -532,8 +544,8 @@ int login_main(int argc UNUSED_PARAM, char **argv)
 			bb_simple_perror_msg("vfork");
 		else {
 			wait_for_exitstatus(child_pid);
-			update_utmp_DEAD_PROCESS(child_pid);
 		}
+		update_utmp_DEAD_PROCESS(my_pid);
 		login_pam_end(pamh);
 		return 0;
 	}
@@ -545,8 +557,6 @@ int login_main(int argc UNUSED_PARAM, char **argv)
 	 * _f_chown is safe wrt race t=ttyname(0);...;chown(t); */
 	fchown(0, pw->pw_uid, pw->pw_gid);
 	fchmod(0, 0600);
-
-	update_utmp(getpid(), USER_PROCESS, short_tty, username, run_by_root ? opt_host : NULL);
 
 	/* We trust environment only if we run by root */
 	if (ENABLE_LOGIN_SCRIPTS && run_by_root)
@@ -602,7 +612,7 @@ int login_main(int argc UNUSED_PARAM, char **argv)
 	signal(SIGINT, SIG_DFL);
 
 	/* Exec login shell with no additional parameters */
-	run_shell(pw->pw_shell, 1, NULL);
+	exec_login_shell(pw->pw_shell);
 
 	/* return EXIT_FAILURE; - not reached */
 }
