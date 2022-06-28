@@ -247,8 +247,7 @@ void lbb_prepare(const char *applet
 		IF_FEATURE_INDIVIDUAL(, char **argv))
 {
 #ifdef bb_cached_errno_ptr
-	(*(int **)not_const_pp(&bb_errno)) = get_perrno();
-	barrier();
+	ASSIGN_CONST_PTR(&bb_errno, get_perrno());
 #endif
 	applet_name = applet;
 
@@ -652,7 +651,7 @@ static void check_suid(int applet_no)
 # if ENABLE_FEATURE_INSTALLER
 static const char usr_bin [] ALIGN1 = "/usr/bin/";
 static const char usr_sbin[] ALIGN1 = "/usr/sbin/";
-static const char *const install_dir[] = {
+static const char *const install_dir[] ALIGN_PTR = {
 	&usr_bin [8], /* "/" */
 	&usr_bin [4], /* "/bin/" */
 	&usr_sbin[4]  /* "/sbin/" */
@@ -726,9 +725,9 @@ int scripted_main(int argc UNUSED_PARAM, char **argv)
 	int script = find_script_by_name(applet_name);
 	if (script >= 0)
 #  if ENABLE_SHELL_ASH
-		exit(ash_main(-script - 1, argv));
+		return ash_main(-script - 1, argv);
 #  elif ENABLE_SHELL_HUSH
-		exit(hush_main(-script - 1, argv));
+		return hush_main(-script - 1, argv);
 #  else
 		return 1;
 #  endif
@@ -763,7 +762,7 @@ get_script_content(unsigned n)
 //usage:#define busybox_trivial_usage NOUSAGE_STR
 //usage:#define busybox_full_usage ""
 //applet:IF_BUSYBOX(IF_FEATURE_SH_STANDALONE(IF_FEATURE_TAB_COMPLETION(APPLET(busybox, BB_DIR_BIN, BB_SUID_MAYBE))))
-int busybox_main(int argc, char *argv[]) MAIN_EXTERNALLY_VISIBLE;
+int busybox_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 #  else
 #   define busybox_main(argc,argv) busybox_main(argv)
 static
@@ -1005,10 +1004,10 @@ int scripted_main(int argc UNUSED_PARAM, char **argv)
 {
 #  if ENABLE_SHELL_ASH
 	int script = 0;
-	exit(ash_main(-script - 1, argv));
+	return ash_main(-script - 1, argv);
 #  elif ENABLE_SHELL_HUSH
 	int script = 0;
-	exit(hush_main(-script - 1, argv));
+	return hush_main(-script - 1, argv);
 #  else
 	return 1;
 #  endif
@@ -1094,7 +1093,7 @@ int main(int argc UNUSED_PARAM, char **argv)
 
 	full_write2_str(bb_basename(argv[0]));
 	full_write2_str(": no applets enabled\n");
-	exit(127);
+	return 127;
 
 #else
 
@@ -1113,8 +1112,14 @@ int main(int argc UNUSED_PARAM, char **argv)
 	 || ENABLE_FEATURE_PREFER_APPLETS
 	 || !BB_MMU
 	) {
-		if (NUM_APPLETS > 1)
-			set_task_comm(applet_name);
+		if (NUM_APPLETS > 1) {
+			/* Careful, do not trash comm of "SCRIPT.sh" -
+			 * the case when started from e.g. #!/bin/ash script.
+			 * (not limited to shells - #!/bin/awk scripts also exist)
+			 */
+			if (re_execed_comm())
+				set_task_comm(applet_name);
+		}
 	}
 
 	parse_config_file(); /* ...maybe, if FEATURE_SUID_CONFIG */

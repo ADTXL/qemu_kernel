@@ -79,6 +79,11 @@ testing "printf understands %Ld" \
 	"-5\n""0\n" \
 	"" ""
 
+testing "printf understands %%" \
+	"${bb}printf '%%\n' 2>&1; echo \$?" \
+	"%\n""0\n" \
+	"" ""
+
 testing "printf handles positive numbers for %d" \
 	"${bb}printf '%d\n' 3 +3 '   3' '   +3' 2>&1; echo \$?" \
 	"3\n"\
@@ -136,6 +141,16 @@ testing "printf aborts on bare %" \
 testing "printf aborts on %r" \
 	"${bb}printf '%r' a b c 2>&1; echo \$?" \
 	"printf: %r: invalid format\n""1\n" \
+	"" ""
+
+testing "printf treats leading 0 as flag" \
+	"${bb}printf '%0*d\n' 2 1 2>&1; echo \$?" \
+	"01\n""0\n" \
+	"" ""
+
+testing "printf handles multiple flags" \
+	"${bb}printf '%0 d\n' 2 2>&1; echo \$?" \
+	" 2\n""0\n" \
 	"" ""
 
 exit $FAILCOUNT

@@ -2261,7 +2261,7 @@ static FAST_FUNC BC_STATUS zbc_num_p(BcNum *a, BcNum *b, BcNum *restrict c, size
 }
 #define zbc_num_p(...) (zbc_num_p(__VA_ARGS__) COMMA_SUCCESS)
 
-static BC_STATUS zbc_num_sqrt(BcNum *a, BcNum *restrict b, size_t scale)
+static NOINLINE BC_STATUS zbc_num_sqrt(BcNum *a, BcNum *restrict b, size_t scale)
 {
 	BcStatus s;
 	BcNum num1, num2, half, f, fprime, *x0, *x1, *temp;
@@ -6011,7 +6011,7 @@ static BC_STATUS zxc_program_assign(char inst)
 #endif
 
 	if (ib || sc || left->t == XC_RESULT_OBASE) {
-		static const char *const msg[] = {
+		static const char *const msg[] ALIGN_PTR = {
 			"bad ibase; must be [2,16]",                 //XC_RESULT_IBASE
 			"bad obase; must be [2,"BC_MAX_OBASE_STR"]", //XC_RESULT_OBASE
 			"bad scale; must be [0,"BC_MAX_SCALE_STR"]", //XC_RESULT_SCALE
