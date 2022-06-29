@@ -11,6 +11,8 @@ wget https://download.qemu.org/qemu-5.0.0.tar.xz
 
 ```
 sudo apt-get install git libglib2.0-dev libfdt-dev libpixman-1-dev zlib1g-dev
+sudo apt install libvirglrenderer-dev
+sudo apt install libvirglrenderer0
 ```
 
 2. 编译安装
