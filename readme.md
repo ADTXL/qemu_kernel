@@ -43,8 +43,10 @@ sudo apt install bc
 然后编译
 
 ```
-cd buildroot/linux/qemu/arm
-make -j6
+user@ubuntu:~/txl/project/qemu_kernel$ make 
+help       qemu-juno  
+user@ubuntu:~/txl/project/qemu_kernel$ make qemu-juno 
+
 ```
 
 ### 2.3.3 运行
@@ -52,41 +54,77 @@ make -j6
 使用如下命令
 
 ```
-cd buildroot/linux/qemu/arm
  ./run_qemu.sh
 ```
 
 如下所示：
 
 ```
-user@b10fa2dc8f66:~/txl/project/qemu_kernel/buildroot/linux/qemu/arm$ ./run_qemu.sh 
+user@ubuntu:~/txl/project/qemu_kernel$ ./run_qemu.sh 
 run qemu without external filesystem
 mke2fs 1.44.1 (24-Mar-2018)
-Creating regular file /home/user/txl/project/qemu_kernel/work/linux-qemu-arm-4_19/image/rootfs.ext4
-Creating filesystem with 512000 1k blocks and 128016 inodes
-Filesystem UUID: 61e2e1d6-dbfb-4068-a749-eba9e5bbfe54
-Superblock backups stored on blocks: 
+创建一般文件 /home/user/txl/project/qemu_kernel/work/juno/image/rootfs.ext4
+创建含有 512000 个块（每块 1k）和 128016 个inode的文件系统
+文件系统UUID：1622ffcc-31cb-4170-82c6-8d6cdaafdbfe
+超级块的备份存储于下列块： 
 	8193, 24577, 40961, 57345, 73729, 204801, 221185, 401409
 
-Allocating group tables: done                            
-Writing inode tables: done                            
-Creating journal (8192 blocks): done
-Copying files into the device: done
-Writing superblocks and filesystem accounting information: 
+正在分配组表： 完成                            
+正在写入inode表： 完成                            
+创建日志（8192 个块） 完成
+将文件复制到设备： 完成
+写入超级块和文件系统账户统计信息： 已完成
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x411fd070]
+[    0.000000] Linux version 4.19.176 (user@ubuntu) (gcc version 7.5.0 (Ubuntu/Linaro 7.5.0-3ubuntu1~18.04), GNU ld (GNU Binutils for Ubuntu) 2.30) #1 SMP PREEMPT Wed Jun 29 05:23:10 PDT 2022
+[    0.000000] Machine model: linux,dummy-virt
+[    0.000000] Memory limited to 512MB
+[    0.000000] efi: Getting EFI parameters from FDT:
+[    0.000000] efi: UEFI not found.
+[    0.000000] cma: Reserved 32 MiB at 0x000000005e000000
+[    0.000000] NUMA: No NUMA configuration found
+[    0.000000] NUMA: Faking a node at [mem 0x0000000040000000-0x000000005fffffff]
+[    0.000000] NUMA: NODE_DATA [mem 0x5dfd9b80-0x5dfdb37f]
+[    0.000000] Zone ranges:
+[    0.000000]   DMA32    [mem 0x0000000040000000-0x000000005fffffff]
+[    0.000000]   Normal   empty
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000040000000-0x000000005fffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000040000000-0x000000005fffffff]
+
 ......
-[    0.794850] devtmpfs: mounted
-[    0.969362] Freeing unused kernel memory: 768K
-[    0.971016] Run /sbin/init as init process
+[    2.074775] VFS: Mounted root (ext4 filesystem) on device 254:0.
+[    2.085599] devtmpfs: mounted
+[    2.260584] Freeing unused kernel memory: 768K
+[    2.274304] Run /sbin/init as init process
 mount: mounting tmpfs on /tmp failed: Invalid argument
 mount: mounting sdcardfs on /sdcard failed: No such device
-[    1.102253] EXT4-fs (vda): re-mounted. Opts: (null)
+[    2.480362] EXT4-fs (vda): re-mounted. Opts: (null)
 
 Processing /etc/profile... Done
 
-/ # ls
-bin         home        lost+found  root        sys         usr
-dev         lib         mnt         sbin        system      var
-etc         linuxrc     proc        sdcard      tmp
+~ # 
+~ # ls
+Makefile                findutils               printutils
+applets                 home                    proc
+archival                include                 procps
+bin                     include2                root
+busybox                 init                    runit
+busybox.links           klibc-utils             sbin
+busybox_unstripped      lib                     scripts
+busybox_unstripped.map  libbb                   sdcard
+busybox_unstripped.out  libpwdgrp               selinux
+console-tools           linuxrc                 shell
+coreutils               loginutils              sys
+debianutils             lost+found              sysklogd
+dev                     mailutils               system
+docs                    miscutils               tmp
+e2fsprogs               mnt                     usr
+editors                 modutils                util-linux
+etc                     networking              var
+~ # 
+
 
 ```
 

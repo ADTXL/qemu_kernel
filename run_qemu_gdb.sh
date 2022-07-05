@@ -42,7 +42,7 @@ then
 else
 	echo "run qemu without external filesystem"
 	mkfs."$FSTYPE" -d "$rootfs_wrkdir" "$imgdir"/rootfs."$FSTYPE" "$ROOTSIZE"
-	"$QEMU" -nographic -M virt -cpu cortex-a57 -smp 1 -m 512 -kernel "$imgdir"/Image \
+	"$QEMU" -nographic -s -S -M virt -cpu cortex-a57 -smp 1 -m 512 -kernel "$imgdir"/Image \
 		-drive id=disk0,file="$imgdir"/rootfs."$FSTYPE",if=none,format=raw \
 		-device virtio-blk-device,drive=disk0 \
 		-append 'root=/dev/vda rw mem=512M  console=ttyAMA0' \
