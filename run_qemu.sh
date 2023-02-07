@@ -16,6 +16,8 @@ EXTSIZE="500M"
 
 FSTYPE="ext4"
 
+dtc -I dts -O dtb -o arm_juno.dtb arm_juno.dts
+
 if [ -f "$imgdir"/rootfs."$FSTYPE" ]
 then
 	rm -f "$imgdir"/rootfs."$FSTYPE"
@@ -46,6 +48,7 @@ else
 		-drive id=disk0,file="$imgdir"/rootfs."$FSTYPE",if=none,format=raw \
 		-device virtio-blk-device,drive=disk0 \
 		-append 'root=/dev/vda rw mem=512M  console=ttyAMA0' \
-		-netdev user,id=net0 -device virtio-net-device,netdev=net0
+		-netdev user,id=net0 -device virtio-net-device,netdev=net0 \
+		-dtb arm_juno.dtb
 fi
 
