@@ -11,8 +11,8 @@ imgdir=""$KernelRootPath"/work/juno/image"
 rootfs_wrkdir=""$imgdir"/rootfs"
 fstab_ext=""$KernelRootPath"/configs/qemu/fstab_ext"
 
-ROOTSIZE="500M"
-EXTSIZE="500M"
+ROOTSIZE="1024M"
+EXTSIZE="1024M"
 
 FSTYPE="ext4"
 
