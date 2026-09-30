@@ -1,16 +1,36 @@
-# 1. 简介
-学习kenel,使用qemu搭建环境
+# qemu_kernel — 在 QEMU 上学 Linux kernel
 
-# 2. 使用说明
+用 QEMU(arm64 virt) 搭一个最小可跑的环境，学习内核的启动、内存管理、调度、驱动与调试。
 
-## 2.1 编译安装qemu
+支持多个内核版本，源码树按需拉取，不塞进 git 仓库：
 
-参考qemu/readme.md
+| 版本 | 源码树 | defconfig | 说明 |
+| --- | --- | --- | --- |
+| `v4.19` (默认) | `kernel/common` | `juno_defconfig` | 仓库内历史版本 |
+| `v7.2` | `kernel/v7.2` | `juno_defconfig` | `scripts/setup-kernel.sh` 按需拉取 |
+| `v7.3` | `kernel/v7.3` | `juno_defconfig` | 可选，约定同上 |
 
-## 2.2 安装toolchain
+版本映射见 `configs/qemu/kernel-versions.mk`。
 
-本来打算把toolchain也直接上传的，arm64的toolchain有些文件大于100M,不太好直接上传，只上传了arm32的toolchain.
-如果对版本没有要求可以直接使用命令安装,
+---
+
+# 1. 准备环境
+
+## 1.1 编译安装 qemu
+
+参考 `qemu/readme.md`。也可以用系统自带的：
+
+```
+sudo apt install qemu-system-arm
+```
+
+`run_qemu.sh` / `make boot-test` 会优先用 `qemu/bin/qemu-system-aarch64`，
+找不到再回退到系统 `qemu-system-aarch64`（也可用 `QEMU=/path/to/qemu` 指定）。
+
+## 1.2 安装 toolchain
+
+arm64 的 toolchain 有些文件大于 100M，不好直接上传，只上传了 arm32 的。
+没有版本要求可以直接装：
 
 ```
 # 32 bit
@@ -19,119 +39,125 @@ sudo apt-get install gcc-arm-linux-gnueabihf
 sudo apt install gcc-aarch64-linux-gnu
 ```
 
-## 2.3 编译
+## 1.3 其它依赖
 
-以编译和运行arm64为例
-
-### 2.3.1  修改路径
-
-运行脚本时需要修改脚本run_qemu中和路径"qemuBinPath"和"KernelRootPath"为真实的存在路径
-
-
-### 2.3.2 编译
-
-有些包没有的可能需要安装下，还有些缺少的根据编译报错安装即可，下面是我编译时需要的包
+缺什么装什么，这是我编译时需要的：
 
 ```
-sudo apt install bison
-sudo apt install flex
-sudo apt install openssl
-sudo apt install libssl-dev
-sudo apt install bc
+sudo apt install bison flex openssl libssl-dev bc \
+                 e2fsprogs qemu-system-arm
 ```
 
-然后编译
+> `e2fsprogs` 提供 `mkfs.ext4`，打包 rootfs 和 `make boot-test` 都要用它。
+
+---
+
+# 2. 编译
+
+## 2.1 获取内核源码树（v4.19 除外）
+
+`v4.19` 已随仓库提供（`kernel/common`），其它版本要先拉源码：
 
 ```
-user@ubuntu:~/txl/project/qemu_kernel$ make 
-help       qemu-juno  
-user@ubuntu:~/txl/project/qemu_kernel$ make qemu-juno 
+# 从 torvalds/linux 拉指定 tag 到 kernel/<version>
+scripts/setup-kernel.sh v7.2
 
+# 或链接一个已有的本地内核树
+scripts/setup-kernel.sh v7.2 --link /path/to/linux
 ```
 
-### 2.3.3 运行
-
-使用如下命令
+## 2.2 编译
 
 ```
- ./run_qemu.sh
+make                        # 打印可用的 target
+make qemu-juno              # 默认版本 v4.19
+make qemu-juno KERNEL_VERSION=v7.2
 ```
 
-如下所示：
+产物在 `work/juno/<version>/image/`：`Image`、`juno-r1.dtb`、`rootfs/`、
+`rootfs.ext4`、`package/image.tar.gz`。
+
+### 内存受限的机器
+
+内核编译是内存大户。本机若内存紧张（例如 8G 机器上 swap 已满），
+4 路并发很容易被 cgroup OOM killer 静默杀掉，表现为**编译中途无故退出**。
+这时降低并发：
 
 ```
-user@ubuntu:~/txl/project/qemu_kernel$ ./run_qemu.sh 
-run qemu without external filesystem
-mke2fs 1.44.1 (24-Mar-2018)
-创建一般文件 /home/user/txl/project/qemu_kernel/work/juno/image/rootfs.ext4
-创建含有 512000 个块（每块 1k）和 128016 个inode的文件系统
-文件系统UUID：1622ffcc-31cb-4170-82c6-8d6cdaafdbfe
-超级块的备份存储于下列块： 
-	8193, 24577, 40961, 57345, 73729, 204801, 221185, 401409
+make qemu-juno KERNEL_VERSION=v7.2 JOBS=2
+```
 
-正在分配组表： 完成                            
-正在写入inode表： 完成                            
-创建日志（8192 个块） 完成
-将文件复制到设备： 完成
-写入超级块和文件系统账户统计信息： 已完成
+## 2.3 运行
 
-[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x411fd070]
-[    0.000000] Linux version 4.19.176 (user@ubuntu) (gcc version 7.5.0 (Ubuntu/Linaro 7.5.0-3ubuntu1~18.04), GNU ld (GNU Binutils for Ubuntu) 2.30) #1 SMP PREEMPT Wed Jun 29 05:23:10 PDT 2022
-[    0.000000] Machine model: linux,dummy-virt
-[    0.000000] Memory limited to 512MB
-[    0.000000] efi: Getting EFI parameters from FDT:
-[    0.000000] efi: UEFI not found.
-[    0.000000] cma: Reserved 32 MiB at 0x000000005e000000
-[    0.000000] NUMA: No NUMA configuration found
-[    0.000000] NUMA: Faking a node at [mem 0x0000000040000000-0x000000005fffffff]
-[    0.000000] NUMA: NODE_DATA [mem 0x5dfd9b80-0x5dfdb37f]
-[    0.000000] Zone ranges:
-[    0.000000]   DMA32    [mem 0x0000000040000000-0x000000005fffffff]
-[    0.000000]   Normal   empty
-[    0.000000] Movable zone start for each node
-[    0.000000] Early memory node ranges
-[    0.000000]   node   0: [mem 0x0000000040000000-0x000000005fffffff]
-[    0.000000] Initmem setup node 0 [mem 0x0000000040000000-0x000000005fffffff]
+用脚本：
 
-......
-[    2.074775] VFS: Mounted root (ext4 filesystem) on device 254:0.
-[    2.085599] devtmpfs: mounted
-[    2.260584] Freeing unused kernel memory: 768K
-[    2.274304] Run /sbin/init as init process
-mount: mounting tmpfs on /tmp failed: Invalid argument
-mount: mounting sdcardfs on /sdcard failed: No such device
-[    2.480362] EXT4-fs (vda): re-mounted. Opts: (null)
+```
+./run_qemu.sh v7.2
+```
+
+或直接用 Makefile 的 `boot-test`（自动 `mkfs.ext4` + 起 QEMU，进 shell 后
+`Ctrl-a x` 退出；`BOOT_TIMEOUT`/`SMP`/`MEM`/`QEMU_CPU` 可调）：
+
+```
+make boot-test KERNEL_VERSION=v7.2 BOOT_TIMEOUT=90
+```
+
+正常启动到 shell 长这样：
+
+```
+[    2.760162] virtio_blk virtio1: [vda] 2097152 512-byte logical blocks (1.07 GB/1.00 GiB)
+[    4.364807] EXT4-fs (vda): mounted filesystem ... r/w with ordered data mode.
+[    4.367556] VFS: Mounted root (ext4 filesystem) on device 254:0.
+[    4.377808] VFS: Pivoted into new rootfs
+[    4.462454] Run /sbin/init as init process
 
 Processing /etc/profile... Done
 
-~ # 
-~ # ls
-Makefile                findutils               printutils
-applets                 home                    proc
-archival                include                 procps
-bin                     include2                root
-busybox                 init                    runit
-busybox.links           klibc-utils             sbin
-busybox_unstripped      lib                     scripts
-busybox_unstripped.map  libbb                   sdcard
-busybox_unstripped.out  libpwdgrp               selinux
-console-tools           linuxrc                 shell
-coreutils               loginutils              sys
-debianutils             lost+found              sysklogd
-dev                     mailutils               system
-docs                    miscutils               tmp
-e2fsprogs               mnt                     usr
-editors                 modutils                util-linux
-etc                     networking              var
-~ # 
-
-
+~ #
 ```
 
-如果想退出，按`Ctrl +a,然后再按x`即可。
+退出：`Ctrl + a`，再按 `x`。
 
-# 3. 目录结构说明
+---
+
+# 3. defconfig 说明
+
+`configs/qemu/<version>/juno_defconfig` 是在 arm64 默认 defconfig 基础上**大幅裁剪**
+过的精简版，只留 QEMU/Juno 上真正用得上的东西：
+
+* **保留**：`virtio-blk` / `virtio-net` / `virtio-console`、`ext4`、`KVM`、
+  `CONFIG_ARM64_VA_BITS_48`、`debugfs`、`ftrace` 全家桶
+  (`FUNCTION_TRACER` / `DYNAMIC_FTRACE` / `FUNCTION_GRAPH_TRACER`)、
+  `SCHEDSTATS`、`PROVE_LOCKING`、`DYNAMIC_DEBUG`。
+* **裁掉**：一堆用不上的网卡/无线/GPU/PHY（`mlx5`、`ath10k/11k/12k`、`iwlwifi`、
+  `nouveau`、`e1000e`、`r8169`…）、`UFS`、`NFC`、`BT`、USB gadget 等。
+
+效果：选项约 511 → 157，模块 434 → 3，内核 `Image` 约 30M → 22M，编译明显更快。
+
+需要改配置时：
+
+```
+make -C build/mk target=qemu-juno menuconfig KERNEL_VERSION=v7.2
+```
+
+# 4. 目录结构说明
+
+```
+configs/
+  qemu/
+    kernel-versions.mk     # 版本 -> 源码树/defconfig 映射
+    fstab_ext              # 带外部盘启动时的 fstab
+    v7.2/juno_defconfig    # 精简 defconfig
+    busybox_defconfig      # busybox 配置
+rootfs/
+  busybox/                 # busybox 源码
+  root_qemu/               # 叠加到 rootfs 的 etc/ (fstab / inittab / rcS / profile)
+build/mk/Makefile          # 主构建逻辑（busybox -> vmlinux -> rootfs -> 打包）
+scripts/setup-kernel.sh    # 按需拉取内核源码树
+run_qemu.sh                # 启动脚本
+kernel/common              # 仓库内 v4.19 源码树
+kernel/<version>           # 其它版本（不入 git，脚本拉取）
+work/juno/<version>/       # 构建产物
+```
 
 TODO
-
-

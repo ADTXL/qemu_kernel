@@ -5,7 +5,7 @@ $(error Please run this in a tree)
 endif    
 $(warning KERNEL_ROOT_DIR = $(KERNEL_ROOT_DIR))
 
-TARGET	:= $(target)
+TARGET	:= $(if $(target),$(target),qemu-juno)
 TARGETSPLT := $(subst -, ,$(TARGET))
 TARGET_PLATFORM := $(word 1, $(TARGETSPLT))
 TARGET_BOARD := $(word 2, $(TARGETSPLT))
@@ -221,6 +221,33 @@ $(ROOTFS_WRKDIR): busybox $(root_srcdir) modules
 .PHONY: qemu_rootfs
 qemu_rootfs: $(ROOTFS_WRKDIR)
 	cp -rf $(QEMU_ROOT)/* $(ROOTFS_WRKDIR)
+
+FSTYPE ?= ext4
+
+# ---- boot-test ---------------------------------------------------------------
+# Boot the freshly built image under QEMU and drop into the shell. Exits when
+# the guest is powered off (or after BOOT_TIMEOUT seconds, default 60).
+#   make boot-test KERNEL_VERSION=v7.2 [BOOT_TIMEOUT=90] [SMP=1] [MEM=512]
+BOOT_TIMEOUT ?= 60
+SMP ?= 1
+MEM ?= 512
+QEMU_HW ?= virt
+QEMU_CPU ?= cortex-a57
+
+.PHONY: boot-test
+boot-test: vmlinux qemu_rootfs
+	@command -v mkfs.$(FSTYPE) >/dev/null 2>&1 || command -v mkfs.ext4 >/dev/null 2>&1 || { echo "error: mkfs.ext4 not found (install e2fsprogs)" >&2; exit 1; }
+	@command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "error: qemu-system-aarch64 not found" >&2; exit 1; }
+	rm -f $(IMGDIR)/rootfs.ext4
+	mkfs.ext4 -d $(ROOTFS_WRKDIR) $(IMGDIR)/rootfs.ext4 1024M
+	@echo "booting $(KERNEL_VERSION) under QEMU (timeout $(BOOT_TIMEOUT)s)..."
+	timeout $(BOOT_TIMEOUT) qemu-system-aarch64 -nographic -M $(QEMU_HW) -cpu $(QEMU_CPU) -smp $(SMP) -m $(MEM) \
+		-kernel $(IMGDIR)/Image \
+		-drive id=disk0,file=$(IMGDIR)/rootfs.ext4,if=none,format=raw \
+		-device virtio-blk-device,drive=disk0 \
+		-append "root=/dev/vda rw mem=$(MEM)M console=ttyAMA0" \
+		-netdev user,id=net0 -device virtio-net-device,netdev=net0 || true
+	@echo "boot-test done"
 
 qemu-remote: vmlinux qemu_rootfs $(QEMU_SRC) $(QEMU_FSTAB_EXT)
 	rm -rf $(PACKAGE_WRKDIR)

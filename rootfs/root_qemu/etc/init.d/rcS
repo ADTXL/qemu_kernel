@@ -2,3 +2,7 @@
 
 /bin/mount -a
 mount / -o rw,remount
+
+# /tmp is a tmpfs; busybox `mount -a` rejects the tmpfs options above on
+# some kernels, so mount it explicitly with plain defaults.
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
