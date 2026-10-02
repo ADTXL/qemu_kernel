@@ -31,3 +31,8 @@ KERNEL_EXTRA_DTS_v7_2    :=
 KERNEL_SRC_DIR_v7_3      := $(KERNEL_ROOT_DIR)/kernel/v7.3
 KERNEL_DEFCONFIG_v7_3    := juno_defconfig
 KERNEL_EXTRA_DTS_v7_3    :=
+
+# --- v7.2ext : experimental build (sched_ext + EAS/EM), same tree as v7.2 ---
+KERNEL_SRC_DIR_v7_2ext      := $(KERNEL_ROOT_DIR)/kernel/v7.2
+KERNEL_DEFCONFIG_v7_2ext    := juno_defconfig
+KERNEL_EXTRA_DTS_v7_2ext    :=
