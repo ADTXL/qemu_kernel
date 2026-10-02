@@ -1,5 +1,8 @@
 work/
-qemu/
+
+# Self-built QEMU build tree (top level only). Must stay anchored as /qemu/
+# otherwise it also swallows configs/qemu/ and the per-version defconfigs.
+/qemu/
 
 # Kernel source trees are fetched on demand by scripts/setup-kernel.sh and are
 # intentionally NOT stored in this repository (a full Linux tree is ~2 GB).
