@@ -227,9 +227,9 @@ FSTYPE ?= ext4
 # ---- boot-test ---------------------------------------------------------------
 # Boot the freshly built image under QEMU and drop into the shell. Exits when
 # the guest is powered off (or after BOOT_TIMEOUT seconds, default 60).
-#   make boot-test KERNEL_VERSION=v7.2 [BOOT_TIMEOUT=90] [SMP=1] [MEM=512]
+#   make boot-test KERNEL_VERSION=v7.2 [BOOT_TIMEOUT=90] [SMP=4] [MEM=512]
 BOOT_TIMEOUT ?= 60
-SMP ?= 1
+SMP ?= 4
 MEM ?= 512
 QEMU_HW ?= virt
 QEMU_CPU ?= cortex-a57

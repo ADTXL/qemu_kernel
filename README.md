@@ -134,17 +134,21 @@ make -C build/mk target=qemu-juno menuconfig KERNEL_VERSION=v7.2
 # 3. 运行
 
 ```
-./run_qemu.sh v7.2                 # 脚本方式
-SMP=2 MEM=1024 ./run_qemu.sh v7.2  # 可调 vCPU 数 / 内存
+./run_qemu.sh v7.2                 # 脚本方式（默认 4 核）
+SMP=8 MEM=1024 ./run_qemu.sh v7.2  # 可调 vCPU 数 / 内存
 ```
 
 或用 Makefile（自动 `mkfs.ext4` + 起 QEMU）：
 
 ```
-make boot-test KERNEL_VERSION=v7.2 BOOT_TIMEOUT=90 SMP=2 MEM=1024
+make boot-test KERNEL_VERSION=v7.2 BOOT_TIMEOUT=90 SMP=4 MEM=1024
 ```
 
-可用变量：`BOOT_TIMEOUT`(60) / `SMP`(1) / `MEM`(512) / `QEMU_HW`(virt) / `QEMU_CPU`(cortex-a57)。
+可用变量：`BOOT_TIMEOUT`(60) / `SMP`(4) / `MEM`(512) / `QEMU_HW`(virt) / `QEMU_CPU`(cortex-a57)。
+
+> ⚠️ **`-smp` 超过 `CONFIG_NR_CPUS` 会被内核剪掉**，而且**没有 boot 参数能绕过**
+> （`nr_cpus=` 只能调小、`maxcpus=` 在 arm64 的 DT 路径上不生效）。
+> 改 `-smp` 前先看 §6.8。
 
 正常启动到 shell：
 
@@ -381,6 +385,57 @@ v7.2 可用的观测面：
 
 ---
 
+## 6.8 `-smp` 加不上去？问题在 `CONFIG_NR_CPUS`，不在 DTB
+
+QEMU `virt` 机器**自己生成 DTB**，而且核数**跟着 `-smp` 变**（实测 `-smp 4/8/16`
+→ DTB 里 4/8/16 个 `cpu` 节点）。`run_qemu.sh` **没有传 `-dtb`**，所以 DTB 是对的。
+
+真正剪掉 CPU 的是**内核自己**：
+
+```
+[    0.000000] Number of cores (4) exceeds configured maximum of 2 - clipping
+[    0.317036] smp: Brought up 1 node, 2 CPUs
+```
+
+剪枝发生在 `arch/arm64/kernel/smp.c:760`：
+
+```c
+if (cpu_count > nr_cpu_ids)
+        pr_warn("Number of cores (%d) exceeds configured maximum of %u - clipping\n",
+                cpu_count, nr_cpu_ids);
+...
+for (i = 1; i < nr_cpu_ids; i++) {   /* ← 循环边界也是 nr_cpu_ids */
+```
+
+而 `nr_cpu_ids` 来自 `CONFIG_NR_CPUS`。原来的 defconfig 写的是 `=2`。
+
+### 为什么 boot 参数救不了
+
+| 参数 | 行为 | 能否加大 |
+| --- | --- | --- |
+| `nr_cpus=N` | `kernel/smp.c:995` 要求 `N < nr_cpu_ids` 才 `set_nr_cpu_ids(N)` | ❌ 只能调小 |
+| `maxcpus=N` | 改的是 `setup_max_cpus`，但 arm64 走 DT 路径，循环边界是 `nr_cpu_ids` | ❌ 不生效 |
+
+⇒ **只能改 `CONFIG_NR_CPUS` 重编**，改完 `make vmlinux KERNEL_VERSION=<ver>`。
+
+### 怎么确认自己踩到了
+
+```sh
+# 1. 看有没有剪枝警告（决定性证据）
+grep "exceeds configured maximum" boot.log
+
+# 2. guest 里核对（scripts/guest/v72-cpu-report.sh）
+nproc; cat /sys/devices/system/cpu/possible
+```
+
+当前两个 defconfig 都是 `CONFIG_NR_CPUS=8`，`SMP` 默认 4 —— 想上 8 核直接
+`SMP=8 ./run_qemu.sh v7.2` 即可，不用重编。超过 8 才需要再改 config。
+
+> 顺带一提：`juno-r1.dtb`（板级 DTB，本仓库构建时会拷进 `image/`）里只有
+> **2 个 A57 + 4 个 A53**，而且 `run_qemu.sh` 根本没把它传给 QEMU。
+> 它只对 **riscv `fw_jump`** 那条启动路径有意义（`build/mk/Makefile:201`
+> 的 `FW_PAYLOAD_FDT_PATH`）。arm64 + `-kernel` 路径用的是 QEMU 自生成 DTB。
+
 # 7. 目录结构
 
 ```
@@ -409,6 +464,6 @@ work/juno/<version>/         # 构建产物，按版本隔离
 
 # 8. TODO
 
-- [ ] 修 QEMU `-dtb` 只起 2 核的问题（换 `-smp` 拓扑匹配，或改 DTB）
+- [x] ~~修 QEMU 只起 2 核~~ → 是 `CONFIG_NR_CPUS=2` 剪的，不是 DTB 问题，见 §6.8
 - [ ] 经 DT OPP + `cpufreq-dt` 造 energy model，验证 EAS / `SD_ASYM_CPUCAPACITY` / hw_pressure
 - [ ] 更多 sched_ext 调度器（`scx_flatcg` / `scx_pair` / `scx_central` 等）

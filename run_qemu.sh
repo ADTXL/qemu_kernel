@@ -9,7 +9,7 @@
 #   KERNEL_VERSION=v7.2     which image dir to boot   (default: v4.19)
 #   EXT=/path/to/dir        mount an extra ext4 disk at boot (optional)
 #   QEMU=/path/to/qemu      qemu-system-aarch64 binary
-#   SMP=4                   number of vCPUs              (default: 1)
+#   SMP=4                   number of vCPUs              (default: 4)
 #   MEM=512                 guest memory in MB            (default: 512)
 #   CPU=cortex-a57          -cpu model                    (default: cortex-a57)
 #
@@ -63,7 +63,7 @@ fi
 
 rm -f "${IMGDIR}/rootfs.${FSTYPE}" "${IMGDIR}/work.${FSTYPE}"
 
-SMP="${SMP:-1}"
+SMP="${SMP:-4}"
 MEM="${MEM:-512}"
 CPU="${CPU:-cortex-a57}"
 
