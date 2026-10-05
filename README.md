@@ -237,6 +237,9 @@ debugfs /sys/kernel/debug debugfs defaults 0 0
 | `sched-ext-test.sh` | guest | 验证 `scx_enabled()` 从 `disabled` 翻到 `enabled` |
 | `test-sched-ext.sh` | host | 重新打包 rootfs + 起 QEMU |
 | `setup-kernel.sh` | host | 按需拉取内核源码树 |
+| `eas-report.sh` | guest | EAS 实验：切 governor + 逐条核对 5 个前置条件 + 打印 EM 功耗表 |
+| `boot-eas.sh` | host | 用自建 EAS DTB 起 v7.2ext guest |
+| `dtb/gen-eas-dtb.py` | host | 生成带 OPP/clock/capacity 的异构 DTB |
 
 ### 为什么脚本要放进 rootfs
 
@@ -453,6 +456,8 @@ build/mk/Makefile            # 主构建逻辑（busybox -> vmlinux -> rootfs ->
 scripts/
   setup-kernel.sh            # 按需拉取内核源码树
   test-sched-ext.sh          # host 侧：打包 + 起 QEMU
+  boot-eas.sh                # host 侧：用自建 EAS DTB 起 v7.2ext
+  dtb/gen-eas-dtb.py         # 生成异构 DTB（OPP + clock + capacity）
   guest/                     # 放进 guest rootfs 执行的脚本
 run_qemu.sh                  # 启动脚本
 kernel/common                # 仓库内 v4.19 源码树
@@ -465,5 +470,171 @@ work/juno/<version>/         # 构建产物，按版本隔离
 # 8. TODO
 
 - [x] ~~修 QEMU 只起 2 核~~ → 是 `CONFIG_NR_CPUS=2` 剪的，不是 DTB 问题，见 §6.8
-- [ ] 经 DT OPP + `cpufreq-dt` 造 energy model，验证 EAS / `SD_ASYM_CPUCAPACITY` / hw_pressure
+- [x] ~~经 DT OPP + `cpufreq-dt` 造 energy model~~ → 5 个前置全部 OK，见 §9
 - [ ] 更多 sched_ext 调度器（`scx_flatcg` / `scx_pair` / `scx_central` 等）
+
+---
+
+# 9. EAS 实验（v7.2ext）
+
+用自建 DTB 在 QEMU 上让 **EAS（Energy Aware Scheduler）真正生效**，并逐条核对
+`kernel/sched/topology.c:403-410` 列出的 5 个前置条件。
+
+## 9.1 为什么必须自建 DTB
+
+QEMU `virt` 自带的 DTB 有三个硬伤：
+
+| 问题 | 依据 |
+| --- | --- |
+| `cpu@N` 没有 `clocks` | `cpufreq-dt.c` 的 `cpufreq_init()` 在 `clk_get()` 失败时直接 return |
+| 没有 `operating-points-v2` | 建不出 OPP 表 → 无 policy → 无 energy model |
+| 不支持异构 `-cpu` | `qemu-system-aarch64 -cpu cortex-a57,cortex-a53` 直接报错 |
+
+而且 QEMU 生成的 DTB **每次启动都重算**（跟着 `-smp` 变），手改不可复现。
+所以流程是：dump 出基线 → 脚本打补丁。
+
+```sh
+# 生成（2 little + 2 big，含 OPP / clock / capacity）
+python3 scripts/dtb/gen-eas-dtb.py -o work/dtb/eas-virt-4.dtb -s 4
+
+# 起 guest（自动带上 -dtb 并触发 guest 侧报告）
+./scripts/boot-eas.sh
+```
+
+## 9.2 DTB 里的两个坑（都踩过，都已修）
+
+**坑 1：clock 必须是 `fixed-factor-clock` + `clock-mult`/`clock-div`**
+
+不是 `fixed-clock`，也不能用裸 `mult`/`div`。依据 `drivers/clk/clk-fixed-factor.c:331`：
+
+```c
+if (of_property_read_u32(node, "clock-div", &div)) {
+        pr_err("%s Fixed factor clock <%pOFn> must have a clock-div property\n", ...);
+        return ERR_PTR(-EIO);
+}
+```
+
+写错属性名的后果是**静默的连锁失败**：
+
+```
+时钟注册失败 → OPP 的 clk_get() 返回 -EPROBE_DEFER
+             → 建不出 OPP 表 → 无 cpufreq policy → 无 energy model
+```
+
+dmesg 里只看得到两条弱线索：
+
+```
+_of_fixed_factor_clk_setup Fixed factor clock <cpu_little_clk> must have a clock-div property
+platform cpufreq-dt: deferred probe pending: (reason unknown)
+```
+
+第二句之所以是 `(reason unknown)`，是因为 `dev_err_probe()` 对 `-EPROBE_DEFER`
+**故意不打印**（`drivers/opp/core.c:1625`）。先用裸 `mult`/`div` 写了，就是被这个坑卡住。
+
+> 为什么是 `fixed-factor` 而不是 `fixed-rate`：`clk-fixed-rate.c` 只有
+> `.recalc_rate`，没有 `.set_rate`；而 cpufreq 的 `set_target()` 会调
+> `clk_set_rate()`。`clk-fixed-factor.c:73` 的 `clk_factor_set_rate()` 无条件
+> `return 0`（注释说明 `clk_factor_determine_rate` 保证这是 no-op），正是需要的。
+
+**坑 2：OPP 共享靠节点指针，不是 `cpus` phandle**
+
+`drivers/opp/of.c` 根本不解析 `cpus` 属性。`dev_pm_opp_of_get_sharing_cpus()` 是：
+
+```c
+if (np == tmp_np)
+        cpumask_set_cpu(cpu, cpumask);   /* 比的是节点指针 */
+```
+
+所以同一 cluster 共享 policy 的办法是：所有 cpu 节点指向**同一个**
+带 `opp-shared` 的 opp-table 节点。
+
+## 9.3 energy model 靠什么注册
+
+`drivers/opp/of.c` 的 `dev_pm_opp_of_register_em()` 只有两条路：
+
+| 路径 | 条件 | 本项目 |
+| --- | --- | --- |
+| `power`（微瓦） | `dev_pm_opp_get_power()` 累加 `opp->supplies[i].u_watt`，来自 regulator | ❌ `CONFIG_REGULATOR=n`，恒为 0 |
+| `dynamic-power-coefficient` | cpu 节点有这个属性 + `opp-microvolt` | ✅ 走这条 |
+
+**注意**：`energy-costs` 在 v7.2 **全树零命中**（`git grep -c energy-costs` = 0），
+该属性早已移除，不要再用。DTB 里留着只是给讲义做对照。
+
+## 9.4 EAS 前置条件 #4：必须切 schedutil
+
+`kernel/sched/topology.c:210` 的整块代码被这个 guard 包着：
+
+```c
+#if defined(CONFIG_ENERGY_MODEL) && defined(CONFIG_CPU_FREQ_GOV_SCHEDUTIL)
+```
+
+而 `cpufreq_ready_for_eas()`（`drivers/cpufreq/cpufreq.c`）明确要求 schedutil：
+
+```c
+/* Do not attempt EAS if schedutil is not being used. */
+if (!cpufreq_policy_is_good_for_eas(cpu)) { ... return false; }
+```
+
+defconfig 默认是 `performance`，所以 guest 脚本先切：
+
+```sh
+echo schedutil > /sys/devices/system/cpu/cpufreq/policy*/scaling_governor
+```
+
+**不用重编**：`CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y` 已在，`schedutil_gov_init` 在 vmlinux 里。
+
+> 一个容易误判的现象：EAS 不可行时 `/proc/sys/kernel/sched_energy_aware`
+> **不是缺失，而是读出空字符串** —— `topology.c:286` 的 handler 在
+> `sched_is_eas_possible()` 为 false 时 `*lenp = 0`。
+
+## 9.5 实测结果（`-smp 4`，v7.2ext）
+
+5 个前置条件全部 OK，`sched_energy_aware = 1`：
+
+```
+  1. Energy Model available ........... OK
+  2. SD_ASYM_CPUCAPACITY .............. OK
+  3. no SMT (cortex-a57, no threads) .... OK
+  4. schedutil on all policies ........ OK
+  5. freq invariance (arm64 generic) ... OK
+```
+
+**energy model 功耗表**（`/sys/kernel/debug/energy_model/`）：
+
+| cluster | 频率 | power (uW) | cost | performance |
+| --- | --- | --- | --- | --- |
+| little (cpu0-1) | 300M | 19200 | 2909 | 66 |
+| little | 600M | 43350 | 3259 | 133 |
+| little | 900M | 72900 | 3663 | 199 |
+| little | 1200M | 108300 | 4071 | 266 |
+| big (cpu2-3) | 600M | 78030 | 2288 | 341 |
+| big | 1200M | 194940 | 2858 | 682 |
+| big | 1800M | 357210 | 3488 | 1024 |
+
+cost 交叉点就是 EAS 要解的题：**big 在 ~1.1GHz 以上每单位算力更省电**，
+所以这不是编出来的假 trade-off。
+
+`SD_ASYM_CPUCAPACITY`（+`_FULL`）出现在每个 cpu 的 `domain1`（根域）；
+`cpu_capacity` = 266（little）/ 1024（big）。little 的 266 是 DT 里写的 400
+被 1200/1800 时钟比缩放后的结果（`capacity_freq_ref`，`arch_topology.c:252`），**符合预期**。
+
+`/proc/pressure/`：`cpu some avg10=3.69`、`irq full avg10=9.87`。memory 全 0 ——
+这是预期结果：QEMU `virt` 没有真实 stall 源去驱动 `topology_update_hw_pressure()`。
+
+## 9.6 已知噪声
+
+每次运行时切 governor 都会触发一串 lockdep splat：
+
+```
+WARNING: kernel/cpu.c:527 at lockdep_assert_cpus_held
+  rebuild_sched_domains_energy -> partition_sched_domains_locked
+```
+
+原因是 kworker 跑 `rebuild_sd_workfn` 时没持 `cpus_lock`，而内核开了
+`CONFIG_PROVE_LOCKING`。与 DTB 无关，对实验无害，但提前知道免得白查。
+
+## 9.7 下一步可做的 A/B
+
+最干净的验证是改 `/proc/sys/kernel/sched_energy_aware`（写 0 关、写 1 开），
+对比 `sched:sched_compute_energy` tracepoint —— 该 tracepoint 只在 EAS
+真正参与放置时触发，是「EAS 确实在工作」的最强证据。
